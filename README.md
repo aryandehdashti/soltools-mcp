@@ -15,7 +15,7 @@ AI agents doing Solana research (trading bots, portfolio agents, security analys
 | `ping` | free | health check |
 | `list_tools` | free | list tools + prices |
 | `sol_balance` | $0.001 | SOL + SPL token balances for any address |
-| `sol_token_price` | $0.001 | price / market cap / liquidity for a token mint |
+| `sol_token_price` | $0.001 | price / market cap / liquidity for a token mint (DexScreener) |
 | `sol_wallet_analysis` | $0.005 | full portfolio with USD valuation, sorted by value |
 | `sol_tx_lookup` | $0.002 | transaction details by signature |
 
@@ -28,22 +28,50 @@ npm run build
 npm start
 ```
 
-Server listens on `http://localhost:4022/sse` (MCP over SSE).
+Server listens on `http://localhost:4022` — MCP over SSE at `/sse`, JSON-RPC POSTs at `/messages`, `/health` for status.
+
+## Demo
+
+`demo.mp4` shows the complete flow: an agent connects, hits a `402` on a paid tool, signs an exact-scheme USDC payment payload locally, and retries with the payment attached.
+
+```bash
+npm start                          # terminal 1
+node scripts/demo-client.mjs       # terminal 2 — full protocol walkthrough
+node scripts/video-demo.mjs        # narrated version used for the video
+```
+
+For the paid retry to settle onchain, the payer needs devnet USDC (mint `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`, claimable at https://faucet.circle.com — select Solana Devnet) and the pay-to address needs a USDC ATA. Without funds the demo still shows the full protocol path: `402` → requirements → locally-signed transaction → facilitator verification reaching onchain state checks.
 
 ## How payments work (x402 v2)
 
-1. Agent calls a paid tool → server returns `402` with `PAYMENT-REQUIRED` header
-2. Agent signs an exact USDC transfer (SPL) via the `@x402/svm` client scheme
-3. Agent retries with `PAYMENT-SIGNATURE` header
-4. Facilitator verifies + settles on Solana devnet
-5. Server returns the data + `PAYMENT-RESPONSE` receipt
+1. Agent calls a paid tool → server returns `402` with payment requirements in `structuredContent`
+2. Agent signs an exact-scheme SPL USDC transfer via `@x402/svm`'s `ExactSvmScheme` (fee payer = facilitator, so the payer needs no SOL for gas)
+3. Agent retries with the payload in `_meta["x402/payment"]`
+4. `x402ResourceServer` verifies via the facilitator and settles on Solana devnet
+5. Server returns the data + a payment receipt in `_meta["x402/payment-response"]`
 
-Network: `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` (devnet)
-Asset: USDC devnet mint `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`
+- Network: `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` (devnet)
+- Asset: USDC devnet mint `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`
+- Facilitator: `https://x402.org/facilitator` (configurable via `FACILITATOR_URL`)
+
+## Architecture
+
+```
+agent ──MCP/SSE──> SolTools server ──402──> agent signs payment
+                      │                        │
+                      └── verify+settle ───────┘
+                           │ x402 facilitator
+                           ▼
+                     Solana devnet (USDC SPL transfer)
+```
+
+- `src/index.ts` — Express + McpServer + `createPaymentWrapper` around each paid tool handler
+- `src/solana.ts` — data providers: RPC balances, DexScreener prices, tx lookup
+- `scripts/demo-client.mjs` — end-to-end client: connect → 402 → sign → paid retry
 
 ## Built for the Solana x402 Hackathon
 
-Track: **Best MCP Server** — Model Context Protocol servers connecting AI agents to payments.
+Track: **Best MCP Server** — MCP servers connecting AI agents to payments.
 
 ## License
 
