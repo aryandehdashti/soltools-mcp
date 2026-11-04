@@ -32,13 +32,29 @@ Server listens on `http://localhost:4022` — MCP over SSE at `/sse`, JSON-RPC P
 
 ## Live deployment
 
-Public endpoint (via SSH tunnel): **https://37c094f458ddca.lhr.life**
+Public endpoint (via SSH tunnel): **https://b4b921a970357d.lhr.life**
 
 - `GET /health` — status + tool catalog
 - `GET /sse` — MCP SSE transport
 - `POST /messages` — MCP JSON-RPC
 
 Any MCP client can connect remotely; payments settle as USDC SPL transfers on Solana devnet via the x402 facilitator.
+
+### Paid REST API (x402 HTTP)
+
+The same tools are also exposed as x402-gated HTTP endpoints — returns `402` + `PAYMENT-REQUIRED` header, retry with `PAYMENT-SIGNATURE`:
+
+| Endpoint | Price |
+|----------|-------|
+| `GET /api/balance?address=...` | $0.001 |
+| `GET /api/token?mint=...` | $0.001 |
+| `GET /api/tx?signature=...` | $0.002 |
+
+```bash
+curl -i "https://b4b921a970357d.lhr.life/api/balance?address=<solana-addr>"
+# HTTP/1.1 402 Payment Required
+# PAYMENT-REQUIRED: <base64 payment requirements>
+```
 
 ## Demo
 

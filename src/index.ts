@@ -224,10 +224,10 @@ export async function main(): Promise<void> {
     }),
   );
 
-  startExpressServer(mcpServer, port);
+  startExpressServer(mcpServer, resourceServer, port);
 }
 
-function startExpressServer(mcpServer: McpServer, port: number): void {
+function startExpressServer(mcpServer: McpServer, resourceServer: x402ResourceServer, port: number): void {
   const app = express();
   const transports = new Map<string, SSEServerTransport>();
 
@@ -248,12 +248,86 @@ function startExpressServer(mcpServer: McpServer, port: number): void {
     await transport.handlePostMessage(req, res, req.body);
   });
 
+
+  // ---- x402-paid REST endpoints (same tools, HTTP transport) ----
+  const paidHttp = (price: string, description: string): express.RequestHandler =>
+    async (req, res, next) => {
+      try {
+        const accepts = await resourceServer.buildPaymentRequirements({
+          scheme: "exact",
+          network: SOLANA_DEVNET,
+          payTo,
+          price,
+        });
+        const resourceInfo = { url: req.originalUrl, description, mimeType: "application/json" };
+        const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64");
+
+        const sig = req.header("PAYMENT-SIGNATURE") ?? req.header("X-PAYMENT");
+        if (!sig) {
+          const pr = await resourceServer.createPaymentRequiredResponse(accepts, resourceInfo);
+          res.status(402).setHeader("PAYMENT-REQUIRED", b64(pr)).json(pr);
+          return;
+        }
+
+        const paymentPayload = JSON.parse(Buffer.from(sig, "base64").toString("utf8"));
+        const pr2 = await resourceServer.createPaymentRequiredResponse(accepts, resourceInfo);
+        const matched = resourceServer.findMatchingRequirements(pr2.accepts, paymentPayload);
+        if (!matched) {
+          res.status(402).setHeader("PAYMENT-REQUIRED", b64(pr2)).json(pr2);
+          return;
+        }
+
+        const verify = await resourceServer.verifyPayment(paymentPayload, matched);
+        if (!verify.isValid) {
+          const pr3 = await resourceServer.createPaymentRequiredResponse(accepts, resourceInfo, verify.invalidReason ?? "verification failed");
+          res.status(402).setHeader("PAYMENT-REQUIRED", b64(pr3)).json(pr3);
+          return;
+        }
+
+        const settle = await resourceServer.settlePayment(paymentPayload, matched);
+        if (!settle.success) {
+          const pr4 = await resourceServer.createPaymentRequiredResponse(accepts, resourceInfo, settle.errorReason ?? "settlement failed");
+          res.status(402).setHeader("PAYMENT-REQUIRED", b64(pr4)).json(pr4);
+          return;
+        }
+
+        res.setHeader("PAYMENT-RESPONSE", b64(settle));
+        next();
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: "internal server error" });
+      }
+    };
+
+  app.get("/api/balance", paidHttp("$0.001", "SOL + SPL token balances for an address"), async (req, res) => {
+    const address = String(req.query.address ?? "");
+    const b = await getBalances(address);
+    res.json({ address, sol: b.sol, tokenCount: b.tokens.length, tokens: b.tokens.slice(0, 20) });
+  });
+
+  app.get("/api/token", paidHttp("$0.001", "Price / mcap / liquidity for a token mint"), async (req, res) => {
+    const mint = String(req.query.mint ?? "");
+    const meta = await getTokenMeta(mint);
+    const d = await dexscreener("tokens/" + mint);
+    const pair = (d?.pairs ?? []).find((p: { chainId: string }) => p.chainId === "solana");
+    res.json({ mint, symbol: meta.symbol, priceUsd: meta.priceUsd, marketCapUsd: pair?.marketCap ?? pair?.fdv ?? null, liquidityUsd: pair?.liquidity?.usd ?? null, volume24hUsd: pair?.volume?.h24 ?? null });
+  });
+
+  app.get("/api/tx", paidHttp("$0.002", "Transaction details by signature"), async (req, res) => {
+    const signature = String(req.query.signature ?? "");
+    const tx = await rpc("getTransaction", [signature, { encoding: "json", maxSupportedTransactionVersion: 0 }]);
+    if (!tx?.value) { res.json({ found: false }); return; }
+    const v = tx.value;
+    res.json({ found: true, status: v.meta?.err ? "failed" : "success", feeSol: (v.meta?.fee ?? 0) / 1e9, slot: v.slot, blockTime: v.blockTime ? new Date(v.blockTime * 1000).toISOString() : null });
+  });
+
   app.get("/health", (_req, res) => {
     res.json({
       status: "ok",
       network: SOLANA_DEVNET,
       payment: "x402 exact / USDC devnet",
       tools: { free: ["ping", "list_tools"], paid: ["sol_balance $0.001", "sol_token_price $0.001", "sol_wallet_analysis $0.005", "sol_tx_lookup $0.002"] },
+      rest: { free: ["GET /health"], paid: ["GET /api/balance $0.001", "GET /api/token $0.001", "GET /api/tx $0.002"] },
     });
   });
 
