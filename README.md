@@ -30,6 +30,16 @@ npm start
 
 Server listens on `http://localhost:4022` — MCP over SSE at `/sse`, JSON-RPC POSTs at `/messages`, `/health` for status.
 
+## Live deployment
+
+Public endpoint (via SSH tunnel): **https://37c094f458ddca.lhr.life**
+
+- `GET /health` — status + tool catalog
+- `GET /sse` — MCP SSE transport
+- `POST /messages` — MCP JSON-RPC
+
+Any MCP client can connect remotely; payments settle as USDC SPL transfers on Solana devnet via the x402 facilitator.
+
 ## Demo
 
 `demo.mp4` shows the complete flow: an agent connects, hits a `402` on a paid tool, signs an exact-scheme USDC payment payload locally, and retries with the payment attached.
