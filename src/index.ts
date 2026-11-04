@@ -78,15 +78,23 @@ export async function main(): Promise<void> {
   resourceServer.register(SOLANA_DEVNET, new ExactSvmScheme({ rpcUrl: process.env.SOLANA_RPC_URL }));
   await resourceServer.initialize();
 
-  const paid = async (price: string) =>
-    createPaymentWrapper(resourceServer, {
-      accepts: await resourceServer.buildPaymentRequirements({
-        scheme: "exact",
-        network: SOLANA_DEVNET,
-        payTo,
-        price,
-      }),
+  const paid = async (price: string) => {
+    const accepts = await resourceServer.buildPaymentRequirements({
+      scheme: "exact",
+      network: SOLANA_DEVNET,
+      payTo,
+      price,
     });
+    // Blockhash hints baked at startup expire within ~90s; drop them so the
+    // client resolves a fresh blockhash per payment (resolveBlockhash fallback).
+    for (const req of accepts) {
+      if (req.extra) {
+        delete req.extra.recentBlockhash;
+        delete req.extra.lastValidBlockHeight;
+      }
+    }
+    return createPaymentWrapper(resourceServer, { accepts });
+  };
 
   // ---- Free tools ----
   mcpServer.tool("ping", "Free health check", {}, async () => ({

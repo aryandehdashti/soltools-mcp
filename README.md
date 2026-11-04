@@ -28,11 +28,11 @@ npm run build
 npm start
 ```
 
-Server listens on `http://localhost:4022` — MCP over SSE at `/sse`, JSON-RPC POSTs at `/messages`, `/health` for status.
+Server listens on `http://localhost:4023` (or PORT from .env) — MCP over SSE at `/sse`, JSON-RPC POSTs at `/messages`, `/health` for status.
 
 ## Live deployment
 
-Public endpoint (via SSH tunnel): **https://b4b921a970357d.lhr.life**
+Public endpoint (via SSH tunnel): **https://aa49fdcce40b02.lhr.life**
 
 - `GET /health` — status + tool catalog
 - `GET /sse` — MCP SSE transport
@@ -51,7 +51,7 @@ The same tools are also exposed as x402-gated HTTP endpoints — returns `402` +
 | `GET /api/tx?signature=...` | $0.002 |
 
 ```bash
-curl -i "https://b4b921a970357d.lhr.life/api/balance?address=<solana-addr>"
+curl -i "https://aa49fdcce40b02.lhr.life/api/balance?address=<solana-addr>"
 # HTTP/1.1 402 Payment Required
 # PAYMENT-REQUIRED: <base64 payment requirements>
 ```
@@ -66,7 +66,7 @@ node scripts/demo-client.mjs       # terminal 2 — full protocol walkthrough
 node scripts/video-demo.mjs        # narrated version used for the video
 ```
 
-For the paid retry to settle onchain, the payer needs devnet USDC (mint `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`, claimable at https://faucet.circle.com — select Solana Devnet) and the pay-to address needs a USDC ATA. Without funds the demo still shows the full protocol path: `402` → requirements → locally-signed transaction → facilitator verification reaching onchain state checks.
+The demo settles a real devnet USDC payment onchain via the facilitator (verify on Solana explorer: payer ATA `75r9nr2bmJNQh4z9oUdBFtbyKS2imm8LyvySwfuP8hd` → payTo ATA `9D9JStLPtd3etNtJSyb81sgGf5CpvNfx3tzjLLgm4Hf`). To reproduce, the payer needs devnet USDC (mint `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`, claimable at https://faucet.circle.com — select Solana Devnet) and the pay-to address needs a USDC ATA. Set `DEMO_PAYER_SECRET` (base58, 64-byte) to reuse a funded payer.
 
 ## How payments work (x402 v2)
 

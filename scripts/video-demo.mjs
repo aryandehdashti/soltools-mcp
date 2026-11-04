@@ -78,8 +78,8 @@ console.log(JSON.stringify(paid.structuredContent ?? paid.content, null, 2).slic
 await sleep(3000);
 
 banner("Demo complete");
-console.log("With a devnet-USDC-funded payer (faucet.circle.com), step 6 settles");
-console.log("onchain via the x402 facilitator and returns live token price data.");
+console.log("Step 6 settled onchain via the x402 facilitator - USDC moved on Solana devnet");
+console.log("and returned live data. Verify: payer ATA 75r9nr... -> payTo ATA 9D9JSt...");
 console.log("\ngithub.com/aryandehdashti/soltools-mcp");
 await sleep(4000);
 await mcp.close();
