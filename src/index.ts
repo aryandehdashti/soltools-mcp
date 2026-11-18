@@ -26,6 +26,8 @@ import { venueIndex } from "./venues.js";
 import { attestTx } from "./attest.js";
 import { scanToken } from "./safetoken.js";
 import { trustScore } from "./trust.js";
+import { inspectContract } from "./contract.js";
+import { validRef, recordRefSale, refStats, publicLog, REF_PAYOUT_PCT } from "./ref.js";
 
 config();
 
@@ -378,6 +380,11 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
         }
 
         res.setHeader("PAYMENT-RESPONSE", b64(settle));
+        const ref = validRef(req.query.ref);
+        if (ref) {
+          const usd = parseFloat(price.replace(/[^0-9.]/g, "")) || 0;
+          recordRefSale(ref, req.path, (matched as { network?: string }).network ?? "unknown", usd);
+        }
         next();
       } catch (e) {
         console.error(e);
@@ -491,13 +498,53 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     res.json(await trustScore(handle, address));
   }));
 
+  app.get("/api/bulkverify", paidHttp("$0.25", "Batch cold-probe up to 10 x402 endpoints — defect list per URL", declareDiscoveryExtension({
+    input: { urls: "https://a.com/x,https://b.com/y" },
+    inputSchema: { properties: { urls: { type: "string", description: "Comma-separated URLs, max 10" } }, required: ["urls"] },
+    output: { example: { count: 2, results: [{ url: "https://a.com/x", payability: "payable", defects: [] }] } },
+  }) as Record<string, unknown>), safe(async (req, res) => {
+    const urls = String(req.query.urls ?? "").split(",").map((u) => u.trim()).filter(Boolean).slice(0, 10);
+    if (!urls.length) { res.json({ error: "urls query param required (comma-separated, max 10)" }); return; }
+    const results = await Promise.all(urls.map((u) => verifyEndpoint(u)));
+    res.json({ count: results.length, results });
+  }));
+
+  app.get("/api/contract", paidHttp("$0.25", "EVM contract quick-check: bytecode, ERC-20 surface, proxy, owner", declareDiscoveryExtension({
+    input: { chain: "base", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
+    inputSchema: {
+      properties: {
+        chain: { type: "string", description: "base | ethereum | arbitrum" },
+        address: { type: "string", description: "Contract address (0x…)" },
+      },
+      required: ["chain", "address"],
+    },
+    output: { example: { isContract: true, erc20: { symbol: "USDC", decimals: 6 }, proxy: null, flags: [] } },
+  }) as Record<string, unknown>), safe(async (req, res) => {
+    const chain = String(req.query.chain ?? "");
+    const address = String(req.query.address ?? "");
+    if (!chain || !address) { res.json({ error: "chain and address query params required" }); return; }
+    res.json(await inspectContract(chain, address));
+  }));
+
+  // Free referral endpoints — transparency is the product.
+  app.get("/api/refstats", (req, res) => {
+    const code = validRef(req.query.code);
+    if (!code) { res.json({ error: "code query param required ([a-z0-9_-])" }); return; }
+    res.json(refStats(code));
+  });
+
+  app.get("/api/reflog", (_req, res) => {
+    res.json(publicLog());
+  });
+
   app.get("/health", (_req, res) => {
     res.json({
       status: "ok",
       networks: evmPayTo ? [SOLANA_MAINNET, BASE_MAINNET] : [SOLANA_MAINNET],
       payment: "x402 exact / USDC",
       tools: { free: ["ping", "list_tools"], paid: ["sol_balance $0.01", "sol_token_price $0.01", "sol_wallet_analysis $0.02", "sol_tx_lookup $0.01"] },
-      rest: { free: ["GET /health"], paid: ["GET /api/balance $0.25", "GET /api/token $0.25", "GET /api/tx $0.25", "GET /api/verify?url=… $0.25", "GET /api/venues $0.25", "GET /api/attest?chain&tx $0.25", "GET /api/safetoken?mint=… $0.25", "GET /api/trust?handle|address $0.25"] },
+      rest: { free: ["GET /health", "GET /api/refstats", "GET /api/reflog"], paid: ["GET /api/balance $0.25", "GET /api/token $0.25", "GET /api/tx $0.25", "GET /api/verify?url=… $0.25", "GET /api/venues $0.25", "GET /api/attest?chain&tx $0.25", "GET /api/safetoken?mint=… $0.25", "GET /api/trust?handle|address $0.25", "GET /api/bulkverify?urls=… $0.25", "GET /api/contract?chain&address $0.25"] },
+      referrals: "?ref=<handle> on any paid route — " + REF_PAYOUT_PCT + "% of attributed sales paid weekly (see /api/reflog)",
     });
   });
 
