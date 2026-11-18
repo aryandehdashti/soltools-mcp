@@ -66,7 +66,7 @@ async function buildAccepts(resourceServer: x402ResourceServer, price: string) {
     payTo: evmPayTo,
     price,
   });
-  return [...solAccepts, ...baseAccepts];
+  return [...baseAccepts, ...solAccepts];
 }
 
 async function getBalances(address: string): Promise<{ sol: number; tokens: TokenHolding[] }> {
@@ -379,13 +379,13 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
       }
     };
 
-  app.get("/api/balance", paidHttp("$0.01", "SOL + SPL token balances for an address"), async (req, res) => {
+  app.get("/api/balance", paidHttp("$0.25", "SOL + SPL token balances for an address"), async (req, res) => {
     const address = String(req.query.address ?? "");
     const b = await getBalances(address);
     res.json({ address, sol: b.sol, tokenCount: b.tokens.length, tokens: b.tokens.slice(0, 20) });
   });
 
-  app.get("/api/token", paidHttp("$0.01", "Price / mcap / liquidity for a token mint"), async (req, res) => {
+  app.get("/api/token", paidHttp("$0.25", "Price / mcap / liquidity for a token mint"), async (req, res) => {
     const mint = String(req.query.mint ?? "");
     const meta = await getTokenMeta(mint);
     const d = await dexscreener("tokens/" + mint);
@@ -393,7 +393,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     res.json({ mint, symbol: meta.symbol, priceUsd: meta.priceUsd, marketCapUsd: pair?.marketCap ?? pair?.fdv ?? null, liquidityUsd: pair?.liquidity?.usd ?? null, volume24hUsd: pair?.volume?.h24 ?? null });
   });
 
-  app.get("/api/tx", paidHttp("$0.01", "Transaction details by signature"), async (req, res) => {
+  app.get("/api/tx", paidHttp("$0.25", "Transaction details by signature"), async (req, res) => {
     const signature = String(req.query.signature ?? "");
     const tx = await rpc("getTransaction", [signature, { encoding: "json", maxSupportedTransactionVersion: 0 }]);
     if (!tx?.value) { res.json({ found: false }); return; }
@@ -401,7 +401,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     res.json({ found: true, status: v.meta?.err ? "failed" : "success", feeSol: (v.meta?.fee ?? 0) / 1e9, slot: v.slot, blockTime: v.blockTime ? new Date(v.blockTime * 1000).toISOString() : null });
   });
 
-  app.get("/api/verify", paidHttp("$0.02", "Cold-probe an x402 endpoint: 402 parse, requirements validity, defect list"), async (req, res) => {
+  app.get("/api/verify", paidHttp("$0.25", "Cold-probe an x402 endpoint: 402 parse, requirements validity, defect list"), async (req, res) => {
     const url = String(req.query.url ?? "");
     if (!url) { res.json({ error: "url query param required" }); return; }
     const result = await verifyEndpoint(url);
@@ -414,7 +414,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
       networks: evmPayTo ? [SOLANA_MAINNET, BASE_MAINNET] : [SOLANA_MAINNET],
       payment: "x402 exact / USDC",
       tools: { free: ["ping", "list_tools"], paid: ["sol_balance $0.01", "sol_token_price $0.01", "sol_wallet_analysis $0.02", "sol_tx_lookup $0.01"] },
-      rest: { free: ["GET /health"], paid: ["GET /api/balance $0.01", "GET /api/token $0.01", "GET /api/tx $0.01", "GET /api/verify?url=… $0.02"] },
+      rest: { free: ["GET /health"], paid: ["GET /api/balance $0.25", "GET /api/token $0.25", "GET /api/tx $0.25", "GET /api/verify?url=… $0.25"] },
     });
   });
 
