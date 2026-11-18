@@ -28,6 +28,7 @@ import { scanToken } from "./safetoken.js";
 import { trustScore } from "./trust.js";
 import { inspectContract } from "./contract.js";
 import { validRef, recordRefSale, refStats, publicLog, REF_PAYOUT_PCT } from "./ref.js";
+import { markChallenge, markSettled, statsSnapshot } from "./stats.js";
 
 config();
 
@@ -300,6 +301,11 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
   const transports = new Map<string, SSEServerTransport>();
   const httpSessions = new Map<string, StreamableHTTPServerTransport>();
 
+  app.use((req, res, next) => {
+    res.on("finish", () => { if (res.statusCode === 402) markChallenge(req.path); });
+    next();
+  });
+
   app.all("/mcp", express.json(), async (req, res) => {
     const sid = req.headers["mcp-session-id"] as string | undefined;
     let transport = sid ? httpSessions.get(sid) : undefined;
@@ -385,6 +391,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
           const usd = parseFloat(price.replace(/[^0-9.]/g, "")) || 0;
           recordRefSale(ref, req.path, (matched as { network?: string }).network ?? "unknown", usd);
         }
+        markSettled(req.path, ref);
         next();
       } catch (e) {
         console.error(e);
@@ -527,6 +534,10 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
   }));
 
   // Free referral endpoints — transparency is the product.
+  app.get("/api/stats", (_req, res) => {
+    res.json(statsSnapshot());
+  });
+
   app.get("/api/refstats", (req, res) => {
     const code = validRef(req.query.code);
     if (!code) { res.json({ error: "code query param required ([a-z0-9_-])" }); return; }
