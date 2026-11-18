@@ -24,6 +24,8 @@ import { SOLANA_MAINNET, rpc, dexscreener, formatUsd, shortAddr } from "./solana
 import { verifyEndpoint } from "./verify.js";
 import { venueIndex } from "./venues.js";
 import { attestTx } from "./attest.js";
+import { scanToken } from "./safetoken.js";
+import { trustScore } from "./trust.js";
 
 config();
 
@@ -463,13 +465,39 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     res.json(result);
   }));
 
+  app.get("/api/safetoken", paidHttp("$0.25", "Token safety scan: mint/freeze authorities, holder concentration, liquidity, sell pressure", declareDiscoveryExtension({
+    input: { mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" },
+    inputSchema: { properties: { mint: { type: "string", description: "Solana token mint address (base58)" } }, required: ["mint"] },
+    output: { example: { found: true, verdict: "caution", flags: [{ code: "concentrated_supply", severity: "medium" }] } },
+  }) as Record<string, unknown>), safe(async (req, res) => {
+    const mint = String(req.query.mint ?? "");
+    if (!mint) { res.json({ error: "mint query param required" }); return; }
+    res.json(await scanToken(mint));
+  }));
+
+  app.get("/api/trust", paidHttp("$0.25", "Agent reputation score: moltbook presence + on-chain activity, with verifiable breakdown", declareDiscoveryExtension({
+    input: { handle: "devin-forge", address: "DZdTYcN6qKDi9exBmF8XaBjKapR1pBUsakxzXEnWmihX" },
+    inputSchema: {
+      properties: {
+        handle: { type: "string", description: "Agent handle (moltbook name)" },
+        address: { type: "string", description: "Solana address (base58)" },
+      },
+    },
+    output: { example: { score: 42, verdict: "some_history", breakdown: [{ signal: "moltbook_karma", points: 8 }] } },
+  }) as Record<string, unknown>), safe(async (req, res) => {
+    const handle = req.query.handle ? String(req.query.handle) : null;
+    const address = req.query.address ? String(req.query.address) : null;
+    if (!handle && !address) { res.json({ error: "handle and/or address query param required" }); return; }
+    res.json(await trustScore(handle, address));
+  }));
+
   app.get("/health", (_req, res) => {
     res.json({
       status: "ok",
       networks: evmPayTo ? [SOLANA_MAINNET, BASE_MAINNET] : [SOLANA_MAINNET],
       payment: "x402 exact / USDC",
       tools: { free: ["ping", "list_tools"], paid: ["sol_balance $0.01", "sol_token_price $0.01", "sol_wallet_analysis $0.02", "sol_tx_lookup $0.01"] },
-      rest: { free: ["GET /health"], paid: ["GET /api/balance $0.25", "GET /api/token $0.25", "GET /api/tx $0.25", "GET /api/verify?url=… $0.25", "GET /api/venues $0.25", "GET /api/attest?chain&tx $0.25"] },
+      rest: { free: ["GET /health"], paid: ["GET /api/balance $0.25", "GET /api/token $0.25", "GET /api/tx $0.25", "GET /api/verify?url=… $0.25", "GET /api/venues $0.25", "GET /api/attest?chain&tx $0.25", "GET /api/safetoken?mint=… $0.25", "GET /api/trust?handle|address $0.25"] },
     });
   });
 
