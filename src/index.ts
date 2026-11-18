@@ -20,6 +20,7 @@ import { HTTPFacilitatorClient } from "@x402/core/server";
 import express from "express";
 import { z } from "zod";
 import { SOLANA_MAINNET, rpc, dexscreener, formatUsd, shortAddr } from "./solana.js";
+import { verifyEndpoint } from "./verify.js";
 
 config();
 
@@ -386,13 +387,20 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     res.json({ found: true, status: v.meta?.err ? "failed" : "success", feeSol: (v.meta?.fee ?? 0) / 1e9, slot: v.slot, blockTime: v.blockTime ? new Date(v.blockTime * 1000).toISOString() : null });
   });
 
+  app.get("/api/verify", paidHttp("$0.005", "Cold-probe an x402 endpoint: 402 parse, requirements validity, defect list"), async (req, res) => {
+    const url = String(req.query.url ?? "");
+    if (!url) { res.json({ error: "url query param required" }); return; }
+    const result = await verifyEndpoint(url);
+    res.json(result);
+  });
+
   app.get("/health", (_req, res) => {
     res.json({
       status: "ok",
       network: SOLANA_MAINNET,
       payment: "x402 exact / USDC",
       tools: { free: ["ping", "list_tools"], paid: ["sol_balance $0.001", "sol_token_price $0.001", "sol_wallet_analysis $0.005", "sol_tx_lookup $0.002"] },
-      rest: { free: ["GET /health"], paid: ["GET /api/balance $0.001", "GET /api/token $0.001", "GET /api/tx $0.002"] },
+      rest: { free: ["GET /health"], paid: ["GET /api/balance $0.001", "GET /api/token $0.001", "GET /api/tx $0.002", "GET /api/verify?url=… $0.005"] },
     });
   });
 
