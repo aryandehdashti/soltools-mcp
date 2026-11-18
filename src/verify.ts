@@ -20,7 +20,11 @@ export interface Defect {
 }
 
 const PRIVATE_HOST =
-  /^(localhost|127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|0\.0\.0\.0|\[?::1\]?|\[?fe80)/i;
+  /^(localhost|127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|0\.0\.0\.0|\[?::1\]?|\[?fe80|\[?f[cd]|\[?::\]?$)/i;
+
+function isPrivateHost(hostname: string): boolean {
+  return PRIVATE_HOST.test(hostname);
+}
 
 function parseQuote(resp: Response, body: string): QuoteInfo | null {
   const hdr = resp.headers.get("PAYMENT-REQUIRED") ?? resp.headers.get("X-PAYMENT-REQUIRED");
@@ -56,24 +60,44 @@ function parseQuote(resp: Response, body: string): QuoteInfo | null {
 
 async function probeOnce(url: string, method: string): Promise<ProbeResult> {
   const start = Date.now();
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 8000);
-  try {
-    const resp = await fetch(url, {
-      method,
-      signal: ctrl.signal,
-      headers: { Accept: "application/json", "User-Agent": "soltools-verify/1.0" },
-      redirect: "follow",
-    });
-    const body = await resp.text();
-    const latency = Date.now() - start;
-    const quote = resp.status === 402 ? parseQuote(resp, body.slice(0, 8192)) : null;
-    return { method, status: resp.status, latency_ms: latency, quote };
-  } catch (e) {
-    return { method, status: null, latency_ms: Date.now() - start, quote: null, error: e instanceof Error ? e.message : String(e) };
-  } finally {
-    clearTimeout(timer);
+  let current = url;
+  // Follow redirects manually so each hop's host is re-validated.
+  for (let hop = 0; hop < 4; hop++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      const resp = await fetch(current, {
+        method,
+        signal: ctrl.signal,
+        headers: { Accept: "application/json", "User-Agent": "soltools-verify/1.0" },
+        redirect: "manual",
+      });
+      if (resp.status >= 300 && resp.status < 400) {
+        const loc = resp.headers.get("location");
+        if (!loc) return { method, status: resp.status, latency_ms: Date.now() - start, quote: null };
+        let next: URL;
+        try {
+          next = new URL(loc, current);
+        } catch {
+          return { method, status: resp.status, latency_ms: Date.now() - start, quote: null, error: "bad redirect location" };
+        }
+        if (!/^https?:$/.test(next.protocol) || isPrivateHost(next.hostname)) {
+          return { method, status: resp.status, latency_ms: Date.now() - start, quote: null, error: "redirect to disallowed host refused" };
+        }
+        current = next.toString();
+        continue;
+      }
+      const body = await resp.text();
+      const latency = Date.now() - start;
+      const quote = resp.status === 402 ? parseQuote(resp, body.slice(0, 8192)) : null;
+      return { method, status: resp.status, latency_ms: latency, quote };
+    } catch (e) {
+      return { method, status: null, latency_ms: Date.now() - start, quote: null, error: e instanceof Error ? e.message : String(e) };
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  return { method, status: null, latency_ms: Date.now() - start, quote: null, error: "too many redirects" };
 }
 
 export async function verifyEndpoint(rawUrl: string): Promise<{
@@ -91,7 +115,7 @@ export async function verifyEndpoint(rawUrl: string): Promise<{
     defects.push({ code: "bad_url", detail: "not a valid http(s) URL" });
     return { url: rawUrl, payability: "broken", defects, probes: [] };
   }
-  if (PRIVATE_HOST.test(url.hostname)) {
+  if (isPrivateHost(url.hostname)) {
     defects.push({ code: "refused", detail: "private/loopback addresses are not probed" });
     return { url: rawUrl, payability: "broken", defects, probes: [] };
   }

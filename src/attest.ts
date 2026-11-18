@@ -85,16 +85,20 @@ async function attestSolana(tx: string): Promise<Attestation> {
   }
   base.confirmed = true;
 
-  // USDC received = positive delta between pre/post token balances per account.
+  // USDC received = positive delta between pre/post token balances per account;
+  // sender = the account(s) with the matching negative delta.
   const pre = new Map<number, { amount: number; owner?: string }>();
   for (const b of meta?.preTokenBalances ?? []) {
     if (b.mint === SOL_USDC) pre.set(b.accountIndex, { amount: Number(b.uiTokenAmount?.uiAmount ?? 0), owner: b.owner });
   }
+  const senders: string[] = [];
+  const postSeen = new Set<number>();
   for (const b of meta?.postTokenBalances ?? []) {
     if (b.mint !== SOL_USDC) continue;
+    postSeen.add(b.accountIndex);
     const post = Number(b.uiTokenAmount?.uiAmount ?? 0);
-    const before = pre.get(b.accountIndex)?.amount ?? 0;
-    const delta = post - before;
+    const delta = post - (pre.get(b.accountIndex)?.amount ?? 0);
+    if (delta < 0 && b.owner) senders.push(b.owner);
     if (delta > 0) {
       base.transfers.push({
         asset: SOL_USDC,
@@ -105,6 +109,11 @@ async function attestSolana(tx: string): Promise<Attestation> {
       });
     }
   }
+  // Accounts whose token balance closed (present in pre, absent in post) are also senders.
+  for (const [idx, p] of pre) {
+    if (!postSeen.has(idx) && p.amount > 0 && p.owner) senders.push(p.owner);
+  }
+  for (const t of base.transfers) t.from = senders[0] ?? null;
   base.verdict = base.transfers.length > 0 ? "settled" : "no_relevant_transfer";
   return base;
 }
