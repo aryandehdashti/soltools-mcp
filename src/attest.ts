@@ -31,30 +31,65 @@ export interface Attestation {
   error?: string;
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function solanaUrls(): string[] {
+  const urls = [
+    process.env.SOLANA_RPC_URL,
+    ...(process.env.SOLANA_RPC_URLS ?? "").split(","),
+    "https://api.mainnet-beta.solana.com",
+    "https://api.mainnet.solana.com",
+  ].filter((u): u is string => !!u && u.startsWith("http"));
+  return [...new Set(urls)];
+}
+
 async function solanaRpc(method: string, params: unknown[]): Promise<any> {
-  const url = process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-  if (!res.ok) throw new Error("solana RPC " + res.status);
-  const j = (await res.json()) as { result?: unknown; error?: { message?: string } };
-  if (j.error) throw new Error(j.error.message ?? "RPC error");
-  return j.result;
+  let lastErr = "unreachable";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    for (const url of solanaUrls()) {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        });
+        if (res.status === 429 || res.status >= 500 || !res.ok) {
+          lastErr = "solana RPC " + res.status;
+          continue;
+        }
+        const j = (await res.json()) as { result?: unknown; error?: { message?: string } };
+        if (j.error) {
+          lastErr = j.error.message ?? "RPC error";
+          continue;
+        }
+        return j.result;
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e);
+      }
+    }
+    await sleep(500 * Math.pow(2, attempt));
+  }
+  throw new Error("solana RPC failed: " + lastErr);
 }
 
 async function evmRpc(method: string, params: unknown[]): Promise<any> {
   const url = process.env.BASE_RPC_URL || BASE_RPC;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-  if (!res.ok) throw new Error("evm RPC " + res.status);
-  const j = (await res.json()) as { result?: unknown; error?: { message?: string } };
-  if (j.error) throw new Error(j.error.message ?? "RPC error");
-  return j.result;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    });
+    if (res.status === 429 || res.status >= 500) {
+      await sleep(400 * Math.pow(2, attempt));
+      continue;
+    }
+    if (!res.ok) throw new Error("evm RPC " + res.status);
+    const j = (await res.json()) as { result?: unknown; error?: { message?: string } };
+    if (j.error) throw new Error(j.error.message ?? "RPC error");
+    return j.result;
+  }
+  throw new Error("evm RPC rate limited after retries");
 }
 
 function padAddr(topic: string): string {

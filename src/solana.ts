@@ -15,24 +15,64 @@ async function cached<T>(key: string, ttlMs: number, fn: () => Promise<T>): Prom
   return v;
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function rpcUrls(): string[] {
+  const urls = [
+    process.env.SOLANA_RPC_URL,
+    ...(process.env.SOLANA_RPC_URLS ?? "").split(","),
+    DEFAULT_RPC,
+    "https://api.mainnet.solana.com",
+  ].filter((u): u is string => !!u && u.startsWith("http"));
+  return [...new Set(urls)];
+}
+
 export async function rpc(method: string, params: unknown[]): Promise<any> {
-  const url = process.env.SOLANA_RPC_URL || DEFAULT_RPC;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-  if (!res.ok) throw new Error("RPC " + method + " failed: " + res.status);
-  const j = (await res.json()) as { result?: unknown; error?: unknown };
-  if (j.error) throw new Error("RPC error: " + JSON.stringify(j.error));
-  return j.result;
+  const urls = rpcUrls();
+  let lastErr = "unreachable";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    for (const url of urls) {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        });
+        if (res.status === 429 || res.status >= 500) {
+          lastErr = method + " " + res.status + " @ " + new URL(url).host;
+          continue;
+        }
+        if (!res.ok) {
+          lastErr = method + " " + res.status + " @ " + new URL(url).host;
+          continue;
+        }
+        const j = (await res.json()) as { result?: unknown; error?: unknown };
+        if (j.error) {
+          lastErr = "RPC error: " + JSON.stringify(j.error);
+          continue;
+        }
+        return j.result;
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e);
+      }
+    }
+    await sleep(500 * Math.pow(2, attempt));
+  }
+  throw new Error("RPC " + method + " failed: " + lastErr);
 }
 
 export async function dexscreener(path: string): Promise<any> {
   return cached("dex:" + path, 20_000, async () => {
-    const res = await fetch(DEFAULT_DEX + "/" + path);
-    if (!res.ok) throw new Error("DexScreener failed: " + res.status);
-    return res.json();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const res = await fetch(DEFAULT_DEX + "/" + path);
+      if (res.status === 429 || res.status >= 500) {
+        await sleep(400 * Math.pow(2, attempt));
+        continue;
+      }
+      if (!res.ok) throw new Error("DexScreener failed: " + res.status);
+      return res.json();
+    }
+    throw new Error("DexScreener rate limited after retries");
   });
 }
 
