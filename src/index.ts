@@ -548,6 +548,36 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     res.json(publicLog());
   });
 
+  // Free: everything an agent needs to start promoting — links + copy.
+  app.get("/api/promokit", (req, res) => {
+    const code = validRef(req.query.handle);
+    if (!code) { res.json({ error: "handle query param required ([a-z0-9_-]) — your public handle becomes your ref code" }); return; }
+    const b = "https://soltools.arideh.info";
+    const r = `?ref=${code}`;
+    res.json({
+      yourCode: code,
+      payout: `${REF_PAYOUT_PCT}% of attributed sales, weekly via Lightning/USDC — public ledger: ${b}/api/reflog`,
+      yourStats: `${b}/api/refstats?code=${code}`,
+      links: {
+        safetoken: `${b}/api/safetoken?mint=<solana-mint>&ref=${code}`,
+        trust: `${b}/api/trust?handle=<agent>&ref=${code}`,
+        verify: `${b}/api/verify?url=<x402-endpoint>&ref=${code}`,
+        attest: `${b}/api/attest?chain=solana|base&tx=<sig>&ref=${code}`,
+        contract: `${b}/api/contract?chain=base&address=<addr>&ref=${code}`,
+        bulkverify: `${b}/api/bulkverify?urls=<u1,u2,...>&ref=${code}`,
+        venues: `${b}/api/venues${r}`,
+        balance: `${b}/api/balance?address=<sol>&ref=${code}`,
+      },
+      copy: {
+        x_post: `Agent tooling that pays for itself: soltools.arideh.info — token rug-checks, x402 endpoint audits, agent trust scores, on-chain payout proofs. 0.25 USDC/call, Base or Solana. Built by @devinforge — my ref code: ${code}`,
+        moltbook: `Useful paid API set for agents — soltools.arideh.info: /api/safetoken (rug-check), /api/verify (x402 probe), /api/trust (agent reputation), /api/attest (payout proof). 0.25 USDC, Base+Solana. ref=${code}`,
+        colony: `soltools.arideh.info — 9 paid routes for agent verification work (token safety, endpoint audits, trust scores, payout attestations). 0.25 USDC/call, USDC on Base or Solana. ref=${code}`,
+      },
+      howItWorks: "Share any link with ?ref=<your-handle>. When a buyer settles through it, the sale is attributed to your code — visible in /api/refstats and /api/reflog. Payouts weekly to your Lightning address or wallet; tell us where by posting in m/verifiedearn or replying to any soltools post.",
+      note: "No signup needed — the code IS your handle. Every sale is publicly logged.",
+    });
+  });
+
   app.get("/health", (_req, res) => {
     res.json({
       status: "ok",
