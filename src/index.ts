@@ -14,6 +14,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
+import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { createPaymentWrapper, x402ResourceServer } from "@x402/mcp";
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { HTTPFacilitatorClient } from "@x402/core/server";
@@ -31,6 +32,9 @@ if (!payToEnv) {
 }
 const payTo: string = payToEnv;
 
+const BASE_MAINNET = "eip155:8453";
+const evmPayTo = process.env.EVM_PAY_TO_ADDRESS;
+
 const facilitatorUrl = process.env.FACILITATOR_URL;
 if (!facilitatorUrl) {
   console.error("FACILITATOR_URL env var is required (x402 facilitator /verify /settle endpoint)");
@@ -46,6 +50,23 @@ interface TokenHolding {
   decimals: number;
   priceUsd?: number;
   valueUsd?: number;
+}
+
+async function buildAccepts(resourceServer: x402ResourceServer, price: string) {
+  const solAccepts = await resourceServer.buildPaymentRequirements({
+    scheme: "exact",
+    network: SOLANA_MAINNET,
+    payTo,
+    price,
+  });
+  if (!evmPayTo) return solAccepts;
+  const baseAccepts = await resourceServer.buildPaymentRequirements({
+    scheme: "exact",
+    network: BASE_MAINNET,
+    payTo: evmPayTo,
+    price,
+  });
+  return [...solAccepts, ...baseAccepts];
 }
 
 async function getBalances(address: string): Promise<{ sol: number; tokens: TokenHolding[] }> {
@@ -77,12 +98,7 @@ async function buildMcpServer(resourceServer: x402ResourceServer): Promise<McpSe
   const mcpServer = new McpServer({ name: "soltools-mcp", version: "1.0.0" });
 
   const paid = async (price: string, toolName: string, description: string, inputSchema: Record<string, unknown>) => {
-    const accepts = await resourceServer.buildPaymentRequirements({
-      scheme: "exact",
-      network: SOLANA_MAINNET,
-      payTo,
-      price,
-    });
+    const accepts = await buildAccepts(resourceServer, price);
     // Blockhash hints baked at startup expire within ~90s; drop them so the
     // client resolves a fresh blockhash per payment (resolveBlockhash fallback).
     for (const req of accepts) {
@@ -266,6 +282,9 @@ export async function main(): Promise<void> {
   const facilitatorClient = new HTTPFacilitatorClient({ url: facilitatorUrl });
   const resourceServer = new x402ResourceServer(facilitatorClient);
   resourceServer.register(SOLANA_MAINNET, new ExactSvmScheme({ rpcUrl: process.env.SOLANA_RPC_URL }));
+  if (evmPayTo) {
+    resourceServer.register(BASE_MAINNET, new ExactEvmScheme());
+  }
   await resourceServer.initialize();
   startExpressServer(() => buildMcpServer(resourceServer), resourceServer, port);
 }
@@ -319,12 +338,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
   const paidHttp = (price: string, description: string): express.RequestHandler =>
     async (req, res, next) => {
       try {
-        const accepts = await resourceServer.buildPaymentRequirements({
-          scheme: "exact",
-          network: SOLANA_MAINNET,
-          payTo,
-          price,
-        });
+        const accepts = await buildAccepts(resourceServer, price);
         const resourceInfo = { url: req.originalUrl, description, mimeType: "application/json" };
         const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64");
 
@@ -397,7 +411,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
   app.get("/health", (_req, res) => {
     res.json({
       status: "ok",
-      network: SOLANA_MAINNET,
+      networks: evmPayTo ? [SOLANA_MAINNET, BASE_MAINNET] : [SOLANA_MAINNET],
       payment: "x402 exact / USDC",
       tools: { free: ["ping", "list_tools"], paid: ["sol_balance $0.001", "sol_token_price $0.001", "sol_wallet_analysis $0.005", "sol_tx_lookup $0.002"] },
       rest: { free: ["GET /health"], paid: ["GET /api/balance $0.001", "GET /api/token $0.001", "GET /api/tx $0.002", "GET /api/verify?url=… $0.005"] },
