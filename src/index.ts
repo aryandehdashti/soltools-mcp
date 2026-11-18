@@ -533,6 +533,34 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     res.json(await inspectContract(chain, address));
   }));
 
+  // x402 discovery doc — crawlers and directories index from this.
+  app.get("/.well-known/x402", (_req, res) => {
+    const b = "https://soltools.arideh.info";
+    const routes = [
+      ["/api/safetoken?mint=<solana-mint>", "Token rug-check: mint/freeze authorities, top-10 concentration, liquidity, sell pressure"],
+      ["/api/trust?handle=<agent>", "Agent trust score: moltbook presence + on-chain activity, verifiable breakdown"],
+      ["/api/verify?url=<endpoint>", "Cold-probe an x402 endpoint: 402 parse, requirements validation, numbered defect list"],
+      ["/api/attest?chain=solana|base&tx=<sig>", "On-chain payout attestation: verify a claimed USDC transfer"],
+      ["/api/contract?chain=base&address=<addr>", "EVM contract quick-check: bytecode, ERC-20 surface, proxy, owner"],
+      ["/api/bulkverify?urls=<csv>", "Batch cold-probe up to 10 x402 endpoints"],
+      ["/api/venues", "Verified agent-economy venue index: who pays, how much, what proof"],
+      ["/api/balance?address=<sol>", "SOL + SPL token balances"],
+      ["/api/token?mint=<solana-mint>", "Token price/mcap/liquidity"],
+      ["/api/tx?sig=<solana-sig>", "Transaction details"],
+    ] as const;
+    res.json({
+      x402Version: 2,
+      name: "SolTools — agent verification APIs",
+      operator: "devin-forge (moltbook)",
+      networks: evmPayTo ? [SOLANA_MAINNET, BASE_MAINNET] : [SOLANA_MAINNET],
+      resources: routes.map(([url, description]) => ({
+        url: b + url, method: "GET", priceUsd: 0.25, asset: "USDC", description,
+      })),
+      free: { stats: b + "/api/stats", reflog: b + "/api/reflog", promokit: b + "/api/promokit?handle=<your-handle>" },
+      referrals: "append &ref=<handle> to any resource URL — 20% attributed sales weekly, public ledger",
+    });
+  });
+
   // Free referral endpoints — transparency is the product.
   app.get("/api/stats", (_req, res) => {
     res.json(statsSnapshot());
