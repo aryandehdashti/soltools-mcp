@@ -128,10 +128,10 @@ async function buildMcpServer(resourceServer: x402ResourceServer): Promise<McpSe
         text: JSON.stringify({
           free: ["ping", "list_tools", "sol_token_info"],
           paid: {
-            sol_balance: "$0.001 - SOL + SPL token balances for any address",
-            sol_token_price: "$0.001 - price/mcap/liquidity for a token mint",
-            sol_wallet_analysis: "$0.005 - full portfolio with USD valuation",
-            sol_tx_lookup: "$0.002 - transaction details by signature",
+            sol_balance: "$0.01 - SOL + SPL token balances for any address",
+            sol_token_price: "$0.01 - price/mcap/liquidity for a token mint",
+            sol_wallet_analysis: "$0.02 - full portfolio with USD valuation",
+            sol_tx_lookup: "$0.01 - transaction details by signature",
           },
           network: SOLANA_MAINNET,
           asset: "USDC",
@@ -169,9 +169,9 @@ async function buildMcpServer(resourceServer: x402ResourceServer): Promise<McpSe
   // ---- Paid tools ----
   mcpServer.tool(
     "sol_balance",
-    "Get SOL and SPL token balances for any address. Paid: $0.001 USDC.",
+    "Get SOL and SPL token balances for any address. Paid: $0.01 USDC.",
     { address: z.string().describe("Solana address (base58)") },
-    (await paid("$0.001", "sol_balance", "Get SOL and SPL token balances for any address", { properties: { address: { type: "string" } }, required: ["address"] }))(async (args: { address: string }) => {
+    (await paid("$0.01", "sol_balance", "Get SOL and SPL token balances for any address", { properties: { address: { type: "string" } }, required: ["address"] }))(async (args: { address: string }) => {
       const b = await getBalances(args.address);
       return {
         content: [{
@@ -189,9 +189,9 @@ async function buildMcpServer(resourceServer: x402ResourceServer): Promise<McpSe
 
   mcpServer.tool(
     "sol_token_price",
-    "Get price, market cap and liquidity for a token mint. Paid: $0.001 USDC.",
+    "Get price, market cap and liquidity for a token mint. Paid: $0.01 USDC.",
     { mint: z.string().describe("Token mint address (base58)") },
-    (await paid("$0.001", "sol_token_price", "Get price, market cap and liquidity for a token mint", { properties: { mint: { type: "string" } }, required: ["mint"] }))(async (args: { mint: string }) => {
+    (await paid("$0.01", "sol_token_price", "Get price, market cap and liquidity for a token mint", { properties: { mint: { type: "string" } }, required: ["mint"] }))(async (args: { mint: string }) => {
       const meta = await getTokenMeta(args.mint);
       const d = await dexscreener("tokens/" + args.mint);
       const pair = (d?.pairs ?? []).find((p: { chainId: string }) => p.chainId === "solana");
@@ -214,9 +214,9 @@ async function buildMcpServer(resourceServer: x402ResourceServer): Promise<McpSe
 
   mcpServer.tool(
     "sol_wallet_analysis",
-    "Full portfolio analysis: every holding priced in USD, sorted by value. Paid: $0.005 USDC.",
+    "Full portfolio analysis: every holding priced in USD, sorted by value. Paid: $0.02 USDC.",
     { address: z.string().describe("Solana address (base58)") },
-    (await paid("$0.005", "sol_wallet_analysis", "Full portfolio with USD valuation, sorted by value", { properties: { address: { type: "string" } }, required: ["address"] }))(async (args: { address: string }) => {
+    (await paid("$0.02", "sol_wallet_analysis", "Full portfolio with USD valuation, sorted by value", { properties: { address: { type: "string" } }, required: ["address"] }))(async (args: { address: string }) => {
       const b = await getBalances(args.address);
       const priced: TokenHolding[] = [];
       for (const t of b.tokens.slice(0, 30)) {
@@ -250,9 +250,9 @@ async function buildMcpServer(resourceServer: x402ResourceServer): Promise<McpSe
 
   mcpServer.tool(
     "sol_tx_lookup",
-    "Look up a transaction by signature: status, fee, block, accounts. Paid: $0.002 USDC.",
+    "Look up a transaction by signature: status, fee, block, accounts. Paid: $0.01 USDC.",
     { signature: z.string().describe("Transaction signature (base58)") },
-    (await paid("$0.002", "sol_tx_lookup", "Transaction details by signature", { properties: { signature: { type: "string" } }, required: ["signature"] }))(async (args: { signature: string }) => {
+    (await paid("$0.01", "sol_tx_lookup", "Transaction details by signature", { properties: { signature: { type: "string" } }, required: ["signature"] }))(async (args: { signature: string }) => {
       const tx = await rpc("getTransaction", [args.signature, { encoding: "json", maxSupportedTransactionVersion: 0 }]);
       if (!tx?.value) {
         return { content: [{ type: "text" as const, text: JSON.stringify({ found: false }) }] };
@@ -379,13 +379,13 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
       }
     };
 
-  app.get("/api/balance", paidHttp("$0.001", "SOL + SPL token balances for an address"), async (req, res) => {
+  app.get("/api/balance", paidHttp("$0.01", "SOL + SPL token balances for an address"), async (req, res) => {
     const address = String(req.query.address ?? "");
     const b = await getBalances(address);
     res.json({ address, sol: b.sol, tokenCount: b.tokens.length, tokens: b.tokens.slice(0, 20) });
   });
 
-  app.get("/api/token", paidHttp("$0.001", "Price / mcap / liquidity for a token mint"), async (req, res) => {
+  app.get("/api/token", paidHttp("$0.01", "Price / mcap / liquidity for a token mint"), async (req, res) => {
     const mint = String(req.query.mint ?? "");
     const meta = await getTokenMeta(mint);
     const d = await dexscreener("tokens/" + mint);
@@ -393,7 +393,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     res.json({ mint, symbol: meta.symbol, priceUsd: meta.priceUsd, marketCapUsd: pair?.marketCap ?? pair?.fdv ?? null, liquidityUsd: pair?.liquidity?.usd ?? null, volume24hUsd: pair?.volume?.h24 ?? null });
   });
 
-  app.get("/api/tx", paidHttp("$0.002", "Transaction details by signature"), async (req, res) => {
+  app.get("/api/tx", paidHttp("$0.01", "Transaction details by signature"), async (req, res) => {
     const signature = String(req.query.signature ?? "");
     const tx = await rpc("getTransaction", [signature, { encoding: "json", maxSupportedTransactionVersion: 0 }]);
     if (!tx?.value) { res.json({ found: false }); return; }
@@ -401,7 +401,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     res.json({ found: true, status: v.meta?.err ? "failed" : "success", feeSol: (v.meta?.fee ?? 0) / 1e9, slot: v.slot, blockTime: v.blockTime ? new Date(v.blockTime * 1000).toISOString() : null });
   });
 
-  app.get("/api/verify", paidHttp("$0.005", "Cold-probe an x402 endpoint: 402 parse, requirements validity, defect list"), async (req, res) => {
+  app.get("/api/verify", paidHttp("$0.02", "Cold-probe an x402 endpoint: 402 parse, requirements validity, defect list"), async (req, res) => {
     const url = String(req.query.url ?? "");
     if (!url) { res.json({ error: "url query param required" }); return; }
     const result = await verifyEndpoint(url);
@@ -413,8 +413,8 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
       status: "ok",
       networks: evmPayTo ? [SOLANA_MAINNET, BASE_MAINNET] : [SOLANA_MAINNET],
       payment: "x402 exact / USDC",
-      tools: { free: ["ping", "list_tools"], paid: ["sol_balance $0.001", "sol_token_price $0.001", "sol_wallet_analysis $0.005", "sol_tx_lookup $0.002"] },
-      rest: { free: ["GET /health"], paid: ["GET /api/balance $0.001", "GET /api/token $0.001", "GET /api/tx $0.002", "GET /api/verify?url=… $0.005"] },
+      tools: { free: ["ping", "list_tools"], paid: ["sol_balance $0.01", "sol_token_price $0.01", "sol_wallet_analysis $0.02", "sol_tx_lookup $0.01"] },
+      rest: { free: ["GET /health"], paid: ["GET /api/balance $0.01", "GET /api/token $0.01", "GET /api/tx $0.01", "GET /api/verify?url=… $0.02"] },
     });
   });
 
