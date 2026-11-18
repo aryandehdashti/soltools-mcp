@@ -1,8 +1,8 @@
 /** Solana RPC + DexScreener helpers with small caches. */
 
-export const SOLANA_DEVNET = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+export const SOLANA_MAINNET = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
 
-const DEFAULT_RPC = "https://api.devnet.solana.com";
+const DEFAULT_RPC = "https://api.mainnet-beta.solana.com";
 const DEFAULT_DEX = "https://api.dexscreener.com/latest/dex";
 
 const cache = new Map<string, { v: unknown; exp: number }>();

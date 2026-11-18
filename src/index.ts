@@ -12,12 +12,14 @@
 import { config } from "dotenv";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { createPaymentWrapper, x402ResourceServer } from "@x402/mcp";
+import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import express from "express";
 import { z } from "zod";
-import { SOLANA_DEVNET, rpc, dexscreener, formatUsd, shortAddr } from "./solana.js";
+import { SOLANA_MAINNET, rpc, dexscreener, formatUsd, shortAddr } from "./solana.js";
 
 config();
 
@@ -70,18 +72,13 @@ async function getTokenMeta(mint: string): Promise<{ symbol?: string; priceUsd?:
   };
 }
 
-export async function main(): Promise<void> {
+async function buildMcpServer(resourceServer: x402ResourceServer): Promise<McpServer> {
   const mcpServer = new McpServer({ name: "soltools-mcp", version: "1.0.0" });
 
-  const facilitatorClient = new HTTPFacilitatorClient({ url: facilitatorUrl });
-  const resourceServer = new x402ResourceServer(facilitatorClient);
-  resourceServer.register(SOLANA_DEVNET, new ExactSvmScheme({ rpcUrl: process.env.SOLANA_RPC_URL }));
-  await resourceServer.initialize();
-
-  const paid = async (price: string) => {
+  const paid = async (price: string, toolName: string, description: string, inputSchema: Record<string, unknown>) => {
     const accepts = await resourceServer.buildPaymentRequirements({
       scheme: "exact",
-      network: SOLANA_DEVNET,
+      network: SOLANA_MAINNET,
       payTo,
       price,
     });
@@ -93,7 +90,10 @@ export async function main(): Promise<void> {
         delete req.extra.lastValidBlockHeight;
       }
     }
-    return createPaymentWrapper(resourceServer, { accepts });
+    return createPaymentWrapper(resourceServer, {
+      accepts,
+      extensions: declareDiscoveryExtension({ toolName, description, inputSchema }),
+    });
   };
 
   // ---- Free tools ----
@@ -109,18 +109,44 @@ export async function main(): Promise<void> {
       content: [{
         type: "text" as const,
         text: JSON.stringify({
-          free: ["ping", "list_tools"],
+          free: ["ping", "list_tools", "sol_token_info"],
           paid: {
             sol_balance: "$0.001 - SOL + SPL token balances for any address",
             sol_token_price: "$0.001 - price/mcap/liquidity for a token mint",
             sol_wallet_analysis: "$0.005 - full portfolio with USD valuation",
             sol_tx_lookup: "$0.002 - transaction details by signature",
           },
-          network: SOLANA_DEVNET,
-          asset: "USDC (devnet)",
+          network: SOLANA_MAINNET,
+          asset: "USDC",
         }, null, 2),
       }],
     }),
+  );
+
+  mcpServer.tool(
+    "sol_token_info",
+    "Free: token mint metadata — name, symbol, supply, decimals, mint/freeze authority flags.",
+    { mint: z.string().describe("Token mint address (base58)") },
+    async (args: { mint: string }) => {
+      const supply = await rpc("getTokenSupply", [args.mint]);
+      const acc = await rpc("getAccountInfo", [args.mint, { encoding: "jsonParsed" }]);
+      const info = acc?.value?.data?.parsed?.info ?? {};
+      const meta = await getTokenMeta(args.mint);
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            mint: args.mint,
+            symbol: meta.symbol ?? null,
+            decimals: supply?.value?.decimals ?? null,
+            supply: supply?.value?.uiAmount ?? null,
+            mintAuthority: info.mintAuthority ?? null,
+            freezeAuthority: info.freezeAuthority ?? null,
+            authoritiesRevoked: !info.mintAuthority && !info.freezeAuthority,
+          }, null, 2),
+        }],
+      };
+    },
   );
 
   // ---- Paid tools ----
@@ -128,7 +154,7 @@ export async function main(): Promise<void> {
     "sol_balance",
     "Get SOL and SPL token balances for any address. Paid: $0.001 USDC.",
     { address: z.string().describe("Solana address (base58)") },
-    (await paid("$0.001"))(async (args: { address: string }) => {
+    (await paid("$0.001", "sol_balance", "Get SOL and SPL token balances for any address", { properties: { address: { type: "string" } }, required: ["address"] }))(async (args: { address: string }) => {
       const b = await getBalances(args.address);
       return {
         content: [{
@@ -148,7 +174,7 @@ export async function main(): Promise<void> {
     "sol_token_price",
     "Get price, market cap and liquidity for a token mint. Paid: $0.001 USDC.",
     { mint: z.string().describe("Token mint address (base58)") },
-    (await paid("$0.001"))(async (args: { mint: string }) => {
+    (await paid("$0.001", "sol_token_price", "Get price, market cap and liquidity for a token mint", { properties: { mint: { type: "string" } }, required: ["mint"] }))(async (args: { mint: string }) => {
       const meta = await getTokenMeta(args.mint);
       const d = await dexscreener("tokens/" + args.mint);
       const pair = (d?.pairs ?? []).find((p: { chainId: string }) => p.chainId === "solana");
@@ -173,7 +199,7 @@ export async function main(): Promise<void> {
     "sol_wallet_analysis",
     "Full portfolio analysis: every holding priced in USD, sorted by value. Paid: $0.005 USDC.",
     { address: z.string().describe("Solana address (base58)") },
-    (await paid("$0.005"))(async (args: { address: string }) => {
+    (await paid("$0.005", "sol_wallet_analysis", "Full portfolio with USD valuation, sorted by value", { properties: { address: { type: "string" } }, required: ["address"] }))(async (args: { address: string }) => {
       const b = await getBalances(args.address);
       const priced: TokenHolding[] = [];
       for (const t of b.tokens.slice(0, 30)) {
@@ -209,7 +235,7 @@ export async function main(): Promise<void> {
     "sol_tx_lookup",
     "Look up a transaction by signature: status, fee, block, accounts. Paid: $0.002 USDC.",
     { signature: z.string().describe("Transaction signature (base58)") },
-    (await paid("$0.002"))(async (args: { signature: string }) => {
+    (await paid("$0.002", "sol_tx_lookup", "Transaction details by signature", { properties: { signature: { type: "string" } }, required: ["signature"] }))(async (args: { signature: string }) => {
       const tx = await rpc("getTransaction", [args.signature, { encoding: "json", maxSupportedTransactionVersion: 0 }]);
       if (!tx?.value) {
         return { content: [{ type: "text" as const, text: JSON.stringify({ found: false }) }] };
@@ -232,19 +258,50 @@ export async function main(): Promise<void> {
     }),
   );
 
-  startExpressServer(mcpServer, resourceServer, port);
+  return mcpServer;
 }
 
-function startExpressServer(mcpServer: McpServer, resourceServer: x402ResourceServer, port: number): void {
+export async function main(): Promise<void> {
+  const facilitatorClient = new HTTPFacilitatorClient({ url: facilitatorUrl });
+  const resourceServer = new x402ResourceServer(facilitatorClient);
+  resourceServer.register(SOLANA_MAINNET, new ExactSvmScheme({ rpcUrl: process.env.SOLANA_RPC_URL }));
+  await resourceServer.initialize();
+  startExpressServer(() => buildMcpServer(resourceServer), resourceServer, port);
+}
+
+function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceServer: x402ResourceServer, port: number): void {
   const app = express();
   const transports = new Map<string, SSEServerTransport>();
+  const httpSessions = new Map<string, StreamableHTTPServerTransport>();
+
+  app.all("/mcp", express.json(), async (req, res) => {
+    const sid = req.headers["mcp-session-id"] as string | undefined;
+    let transport = sid ? httpSessions.get(sid) : undefined;
+    if (!transport) {
+      const msgs = Array.isArray(req.body) ? req.body : [req.body];
+      const isInit = !sid && msgs.some((m: { method?: string }) => m?.method === "initialize");
+      if (!isInit) {
+        res.status(400).json({ jsonrpc: "2.0", error: { code: -32000, message: "Bad Request: no valid session" }, id: null });
+        return;
+      }
+      transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => crypto.randomUUID(),
+        onsessioninitialized: (id: string) => { httpSessions.set(id, transport as StreamableHTTPServerTransport); },
+      });
+      transport.onclose = () => { const id = (transport as StreamableHTTPServerTransport).sessionId; if (id) httpSessions.delete(id); };
+      const server = await buildMcpServer();
+      await server.connect(transport);
+    }
+    await transport.handleRequest(req, res, req.body);
+  });
 
   app.get("/sse", async (_req, res) => {
     const transport = new SSEServerTransport("/messages", res);
     const sessionId = crypto.randomUUID();
     transports.set(sessionId, transport);
     res.on("close", () => transports.delete(sessionId));
-    await mcpServer.connect(transport);
+    const server = await buildMcpServer();
+    await server.connect(transport);
   });
 
   app.post("/messages", express.json(), async (req, res) => {
@@ -263,7 +320,7 @@ function startExpressServer(mcpServer: McpServer, resourceServer: x402ResourceSe
       try {
         const accepts = await resourceServer.buildPaymentRequirements({
           scheme: "exact",
-          network: SOLANA_DEVNET,
+          network: SOLANA_MAINNET,
           payTo,
           price,
         });
@@ -332,8 +389,8 @@ function startExpressServer(mcpServer: McpServer, resourceServer: x402ResourceSe
   app.get("/health", (_req, res) => {
     res.json({
       status: "ok",
-      network: SOLANA_DEVNET,
-      payment: "x402 exact / USDC devnet",
+      network: SOLANA_MAINNET,
+      payment: "x402 exact / USDC",
       tools: { free: ["ping", "list_tools"], paid: ["sol_balance $0.001", "sol_token_price $0.001", "sol_wallet_analysis $0.005", "sol_tx_lookup $0.002"] },
       rest: { free: ["GET /health"], paid: ["GET /api/balance $0.001", "GET /api/token $0.001", "GET /api/tx $0.002"] },
     });
@@ -341,7 +398,7 @@ function startExpressServer(mcpServer: McpServer, resourceServer: x402ResourceSe
 
   app.listen(port, () => {
     console.log("SolTools MCP running on http://localhost:" + port);
-    console.log("Network: " + SOLANA_DEVNET + " | PayTo: " + payTo);
+    console.log("Network: " + SOLANA_MAINNET + " | PayTo: " + payTo);
     console.log("Tools: ping, list_tools (free) | sol_balance, sol_token_price, sol_wallet_analysis, sol_tx_lookup (paid)");
   });
 }
