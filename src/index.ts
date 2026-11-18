@@ -29,6 +29,7 @@ import { trustScore } from "./trust.js";
 import { inspectContract } from "./contract.js";
 import { validRef, recordRefSale, refStats, publicLog, REF_PAYOUT_PCT } from "./ref.js";
 import { markChallenge, markSettled, statsSnapshot } from "./stats.js";
+import { buildChain, CHAIN_USAGE } from "./chain.js";
 
 config();
 
@@ -605,6 +606,24 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
       note: "No signup needed — the code IS your handle. Every sale is publicly logged.",
     });
   });
+
+  // Free: hash-chained acceptance-test transcripts (chaincheck-link-v1).
+  // Pure compute, no chain I/O — kept free so any two parties can produce the
+  // same root; anchoring that root on-chain is what /api/attest is for.
+  const chainHandler = (raw: unknown, res: express.Response) => {
+    const r = buildChain(raw);
+    if (!r.ok) { res.status(400).json({ error: r.error, usage: CHAIN_USAGE }); return; }
+    res.json({ ...r, anchor: "commit this root on-chain, then prove it via /api/attest?chain&tx" });
+  };
+  app.get("/api/chain", (req, res) => {
+    const b64 = req.query.steps;
+    if (typeof b64 !== "string" || !b64) { res.json(CHAIN_USAGE); return; }
+    try {
+      const raw = JSON.parse(Buffer.from(b64.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"));
+      chainHandler(raw, res);
+    } catch { res.status(400).json({ error: "steps must be base64url-encoded JSON array", usage: CHAIN_USAGE }); }
+  });
+  app.post("/api/chain", express.json({ limit: "300kb" }), (req, res) => chainHandler(req.body, res));
 
   app.get("/health", (_req, res) => {
     res.json({
