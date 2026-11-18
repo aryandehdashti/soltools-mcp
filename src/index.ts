@@ -22,6 +22,8 @@ import express from "express";
 import { z } from "zod";
 import { SOLANA_MAINNET, rpc, dexscreener, formatUsd, shortAddr } from "./solana.js";
 import { verifyEndpoint } from "./verify.js";
+import { venueIndex } from "./venues.js";
+import { attestTx } from "./attest.js";
 
 config();
 
@@ -253,7 +255,7 @@ async function buildMcpServer(resourceServer: x402ResourceServer): Promise<McpSe
     "Look up a transaction by signature: status, fee, block, accounts. Paid: $0.01 USDC.",
     { signature: z.string().describe("Transaction signature (base58)") },
     (await paid("$0.01", "sol_tx_lookup", "Transaction details by signature", { properties: { signature: { type: "string" } }, required: ["signature"] }))(async (args: { signature: string }) => {
-      const tx = await rpc("getTransaction", [args.signature, { encoding: "json", maxSupportedTransactionVersion: 0 }]);
+      const tx = await rpc("getTransaction", [args.signature, { encoding: "json", maxSupportedTransactionVersion: 127 }]);
       if (!tx?.value) {
         return { content: [{ type: "text" as const, text: JSON.stringify({ found: false }) }] };
       }
@@ -335,22 +337,24 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
 
 
   // ---- x402-paid REST endpoints (same tools, HTTP transport) ----
-  const paidHttp = (price: string, description: string): express.RequestHandler =>
+  const paidHttp = (price: string, description: string, discovery?: Record<string, unknown>): express.RequestHandler =>
     async (req, res, next) => {
       try {
         const accepts = await buildAccepts(resourceServer, price);
         const resourceInfo = { url: req.originalUrl, description, mimeType: "application/json" };
         const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64");
+        const prFor = (err?: string) =>
+          resourceServer.createPaymentRequiredResponse(accepts, resourceInfo, err, discovery);
 
         const sig = req.header("PAYMENT-SIGNATURE") ?? req.header("X-PAYMENT");
         if (!sig) {
-          const pr = await resourceServer.createPaymentRequiredResponse(accepts, resourceInfo);
+          const pr = await prFor();
           res.status(402).setHeader("PAYMENT-REQUIRED", b64(pr)).json(pr);
           return;
         }
 
         const paymentPayload = JSON.parse(Buffer.from(sig, "base64").toString("utf8"));
-        const pr2 = await resourceServer.createPaymentRequiredResponse(accepts, resourceInfo);
+        const pr2 = await prFor();
         const matched = resourceServer.findMatchingRequirements(pr2.accepts, paymentPayload);
         if (!matched) {
           res.status(402).setHeader("PAYMENT-REQUIRED", b64(pr2)).json(pr2);
@@ -359,14 +363,14 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
 
         const verify = await resourceServer.verifyPayment(paymentPayload, matched);
         if (!verify.isValid) {
-          const pr3 = await resourceServer.createPaymentRequiredResponse(accepts, resourceInfo, verify.invalidReason ?? "verification failed");
+          const pr3 = await prFor(verify.invalidReason ?? "verification failed");
           res.status(402).setHeader("PAYMENT-REQUIRED", b64(pr3)).json(pr3);
           return;
         }
 
         const settle = await resourceServer.settlePayment(paymentPayload, matched);
         if (!settle.success) {
-          const pr4 = await resourceServer.createPaymentRequiredResponse(accepts, resourceInfo, settle.errorReason ?? "settlement failed");
+          const pr4 = await prFor(settle.errorReason ?? "settlement failed");
           res.status(402).setHeader("PAYMENT-REQUIRED", b64(pr4)).json(pr4);
           return;
         }
@@ -379,13 +383,21 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
       }
     };
 
-  app.get("/api/balance", paidHttp("$0.25", "SOL + SPL token balances for an address"), async (req, res) => {
+  app.get("/api/balance", paidHttp("$0.25", "SOL + SPL token balances for an address", declareDiscoveryExtension({
+    input: { address: "DZdTYcN6qKDi9exBmF8XaBjKapR1pBUsakxzXEnWmihX" },
+    inputSchema: { properties: { address: { type: "string", description: "Solana address (base58)" } }, required: ["address"] },
+    output: { example: { address: "DZdT…mihX", sol: 1.5, tokenCount: 3, tokens: [] } },
+  }) as Record<string, unknown>), async (req, res) => {
     const address = String(req.query.address ?? "");
     const b = await getBalances(address);
     res.json({ address, sol: b.sol, tokenCount: b.tokens.length, tokens: b.tokens.slice(0, 20) });
   });
 
-  app.get("/api/token", paidHttp("$0.25", "Price / mcap / liquidity for a token mint"), async (req, res) => {
+  app.get("/api/token", paidHttp("$0.25", "Price / mcap / liquidity for a token mint", declareDiscoveryExtension({
+    input: { mint: "So11111111111111111111111111111111111111112" },
+    inputSchema: { properties: { mint: { type: "string", description: "Token mint address (base58)" } }, required: ["mint"] },
+    output: { example: { mint: "So11…1112", symbol: "SOL", priceUsd: 150.2, marketCapUsd: 70000000000, liquidityUsd: 5000000, volume24hUsd: 3000000000 } },
+  }) as Record<string, unknown>), async (req, res) => {
     const mint = String(req.query.mint ?? "");
     const meta = await getTokenMeta(mint);
     const d = await dexscreener("tokens/" + mint);
@@ -393,18 +405,50 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     res.json({ mint, symbol: meta.symbol, priceUsd: meta.priceUsd, marketCapUsd: pair?.marketCap ?? pair?.fdv ?? null, liquidityUsd: pair?.liquidity?.usd ?? null, volume24hUsd: pair?.volume?.h24 ?? null });
   });
 
-  app.get("/api/tx", paidHttp("$0.25", "Transaction details by signature"), async (req, res) => {
+  app.get("/api/tx", paidHttp("$0.25", "Transaction details by signature", declareDiscoveryExtension({
+    input: { signature: "5VERv8NM…" },
+    inputSchema: { properties: { signature: { type: "string", description: "Transaction signature (base58)" } }, required: ["signature"] },
+    output: { example: { found: true, status: "success", feeSol: 0.000005, slot: 250000000, blockTime: "2026-01-01T00:00:00.000Z" } },
+  }) as Record<string, unknown>), async (req, res) => {
     const signature = String(req.query.signature ?? "");
-    const tx = await rpc("getTransaction", [signature, { encoding: "json", maxSupportedTransactionVersion: 0 }]);
+    const tx = await rpc("getTransaction", [signature, { encoding: "json", maxSupportedTransactionVersion: 127 }]);
     if (!tx?.value) { res.json({ found: false }); return; }
     const v = tx.value;
     res.json({ found: true, status: v.meta?.err ? "failed" : "success", feeSol: (v.meta?.fee ?? 0) / 1e9, slot: v.slot, blockTime: v.blockTime ? new Date(v.blockTime * 1000).toISOString() : null });
   });
 
-  app.get("/api/verify", paidHttp("$0.25", "Cold-probe an x402 endpoint: 402 parse, requirements validity, defect list"), async (req, res) => {
+  app.get("/api/verify", paidHttp("$0.25", "Cold-probe an x402 endpoint: 402 parse, requirements validity, defect list", declareDiscoveryExtension({
+    input: { url: "https://example.com/api/paid" },
+    inputSchema: { properties: { url: { type: "string", description: "Endpoint URL to cold-probe (public http/https only)" } }, required: ["url"] },
+    output: { example: { url: "https://example.com/api/paid", payability: "payable", defects: [], probes: [{ method: "GET", status: 402, latency_ms: 210 }] } },
+  }) as Record<string, unknown>), async (req, res) => {
     const url = String(req.query.url ?? "");
     if (!url) { res.json({ error: "url query param required" }); return; }
     const result = await verifyEndpoint(url);
+    res.json(result);
+  });
+
+  app.get("/api/venues", paidHttp("$0.25", "Verified agent-economy venue index: who pays, how much, what proof", declareDiscoveryExtension({
+    output: { example: { version: 1, count: 12, venues: [{ id: "aibtc", payerType: "treasury", proofClass: "platform_receipt", status: "alive" }] } },
+  }) as Record<string, unknown>), (_req, res) => {
+    res.json(venueIndex());
+  });
+
+  app.get("/api/attest", paidHttp("$0.25", "On-chain payout attestation: verify a claimed USDC transfer on Solana or Base", declareDiscoveryExtension({
+    input: { chain: "base", tx: "0x…" },
+    inputSchema: {
+      properties: {
+        chain: { type: "string", description: "solana | base" },
+        tx: { type: "string", description: "Transaction hash/signature" },
+      },
+      required: ["chain", "tx"],
+    },
+    output: { example: { verdict: "settled", confirmed: true, chain: "base", transfers: [{ asset: "0x833589…913", amountUsd: 0.25, to: "0xa659…3E96" }] } },
+  }) as Record<string, unknown>), async (req, res) => {
+    const chain = String(req.query.chain ?? "");
+    const tx = String(req.query.tx ?? "");
+    if (!chain || !tx) { res.json({ error: "chain and tx query params required" }); return; }
+    const result = await attestTx(chain, tx);
     res.json(result);
   });
 
@@ -414,7 +458,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
       networks: evmPayTo ? [SOLANA_MAINNET, BASE_MAINNET] : [SOLANA_MAINNET],
       payment: "x402 exact / USDC",
       tools: { free: ["ping", "list_tools"], paid: ["sol_balance $0.01", "sol_token_price $0.01", "sol_wallet_analysis $0.02", "sol_tx_lookup $0.01"] },
-      rest: { free: ["GET /health"], paid: ["GET /api/balance $0.25", "GET /api/token $0.25", "GET /api/tx $0.25", "GET /api/verify?url=… $0.25"] },
+      rest: { free: ["GET /health"], paid: ["GET /api/balance $0.25", "GET /api/token $0.25", "GET /api/tx $0.25", "GET /api/verify?url=… $0.25", "GET /api/venues $0.25", "GET /api/attest?chain&tx $0.25"] },
     });
   });
 
