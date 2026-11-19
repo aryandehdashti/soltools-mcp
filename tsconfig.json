@@ -5,6 +5,7 @@
     "moduleResolution": "Node16",
     "outDir": "dist",
     "strict": true,
+    "noEmitOnError": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "declaration": true
