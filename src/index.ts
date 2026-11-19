@@ -302,12 +302,12 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
   const transports = new Map<string, SSEServerTransport>();
   const httpSessions = new Map<string, StreamableHTTPServerTransport>();
 
-  app.use((req, res, next) => {
+  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
     res.on("finish", () => { if (res.statusCode === 402) markChallenge(req.path); });
     next();
   });
 
-  app.all("/mcp", express.json(), async (req, res) => {
+  app.all("/mcp", express.json(), async (req: express.Request, res: express.Response) => {
     const sid = req.headers["mcp-session-id"] as string | undefined;
     let transport = sid ? httpSessions.get(sid) : undefined;
     if (!transport) {
@@ -328,7 +328,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     await transport.handleRequest(req, res, req.body);
   });
 
-  app.get("/sse", async (_req, res) => {
+  app.get("/sse", async (_req: express.Request, res: express.Response) => {
     const transport = new SSEServerTransport("/messages", res);
     const sessionId = crypto.randomUUID();
     transports.set(sessionId, transport);
@@ -337,7 +337,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     await server.connect(transport);
   });
 
-  app.post("/messages", express.json(), async (req, res) => {
+  app.post("/messages", express.json(), async (req: express.Request, res: express.Response) => {
     const transport = Array.from(transports.values())[0];
     if (!transport) {
       res.status(400).json({ error: "No active SSE connection" });
@@ -349,7 +349,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
 
   // ---- x402-paid REST endpoints (same tools, HTTP transport) ----
   const paidHttp = (price: string, description: string, discovery?: Record<string, unknown>): express.RequestHandler =>
-    async (req, res, next) => {
+    async (req: express.Request, res: express.Response, next: express.NextFunction) => {
       try {
         const accepts = await buildAccepts(resourceServer, price);
         const resourceInfo = { url: req.originalUrl, description, mimeType: "application/json" };
@@ -402,7 +402,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
 
   // A paid call must never answer an HTML 500 — buyer already settled.
   const safe = (h: express.RequestHandler): express.RequestHandler =>
-    async (req, res) => {
+    async (req: express.Request, res: express.Response) => {
       try {
         await h(req, res, () => {});
       } catch (e) {
@@ -415,7 +415,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     input: { address: "DZdTYcN6qKDi9exBmF8XaBjKapR1pBUsakxzXEnWmihX" },
     inputSchema: { properties: { address: { type: "string", description: "Solana address (base58)" } }, required: ["address"] },
     output: { example: { address: "DZdT…mihX", sol: 1.5, tokenCount: 3, tokens: [] } },
-  }) as Record<string, unknown>), safe(async (req, res) => {
+  }) as Record<string, unknown>), safe(async (req: express.Request, res: express.Response) => {
     const address = String(req.query.address ?? "");
     const b = await getBalances(address);
     res.json({ address, sol: b.sol, tokenCount: b.tokens.length, tokens: b.tokens.slice(0, 20) });
@@ -425,7 +425,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     input: { mint: "So11111111111111111111111111111111111111112" },
     inputSchema: { properties: { mint: { type: "string", description: "Token mint address (base58)" } }, required: ["mint"] },
     output: { example: { mint: "So11…1112", symbol: "SOL", priceUsd: 150.2, marketCapUsd: 70000000000, liquidityUsd: 5000000, volume24hUsd: 3000000000 } },
-  }) as Record<string, unknown>), safe(async (req, res) => {
+  }) as Record<string, unknown>), safe(async (req: express.Request, res: express.Response) => {
     const mint = String(req.query.mint ?? "");
     const meta = await getTokenMeta(mint);
     const d = await dexscreener("tokens/" + mint);
@@ -437,7 +437,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     input: { signature: "5VERv8NM…" },
     inputSchema: { properties: { signature: { type: "string", description: "Transaction signature (base58)" } }, required: ["signature"] },
     output: { example: { found: true, status: "success", feeSol: 0.000005, slot: 250000000, blockTime: "2026-01-01T00:00:00.000Z" } },
-  }) as Record<string, unknown>), safe(async (req, res) => {
+  }) as Record<string, unknown>), safe(async (req: express.Request, res: express.Response) => {
     const signature = String(req.query.signature ?? "");
     const tx = await rpc("getTransaction", [signature, { encoding: "json", maxSupportedTransactionVersion: 127 }]);
     if (!tx) { res.json({ found: false }); return; }
@@ -449,7 +449,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     input: { url: "https://example.com/api/paid" },
     inputSchema: { properties: { url: { type: "string", description: "Endpoint URL to cold-probe (public http/https only)" } }, required: ["url"] },
     output: { example: { url: "https://example.com/api/paid", payability: "payable", defects: [], probes: [{ method: "GET", status: 402, latency_ms: 210 }] } },
-  }) as Record<string, unknown>), safe(async (req, res) => {
+  }) as Record<string, unknown>), safe(async (req: express.Request, res: express.Response) => {
     const url = String(req.query.url ?? "");
     if (!url) { res.json({ error: "url query param required" }); return; }
     const result = await verifyEndpoint(url);
@@ -458,7 +458,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
 
   app.get("/api/venues", paidHttp("$0.25", "Verified agent-economy venue index: who pays, how much, what proof", declareDiscoveryExtension({
     output: { example: { version: 1, count: 12, venues: [{ id: "aibtc", payerType: "treasury", proofClass: "platform_receipt", status: "alive" }] } },
-  }) as Record<string, unknown>), (_req, res) => {
+  }) as Record<string, unknown>), (_req: express.Request, res: express.Response) => {
     res.json(venueIndex());
   });
 
@@ -472,7 +472,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
       required: ["chain", "tx"],
     },
     output: { example: { verdict: "settled", confirmed: true, chain: "base", transfers: [{ asset: "0x833589…913", amountUsd: 0.25, to: "0xa659…3E96" }] } },
-  }) as Record<string, unknown>), safe(async (req, res) => {
+  }) as Record<string, unknown>), safe(async (req: express.Request, res: express.Response) => {
     const chain = String(req.query.chain ?? "");
     const tx = String(req.query.tx ?? "");
     if (!chain || !tx) { res.json({ error: "chain and tx query params required" }); return; }
@@ -484,7 +484,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     input: { mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" },
     inputSchema: { properties: { mint: { type: "string", description: "Solana token mint address (base58)" } }, required: ["mint"] },
     output: { example: { found: true, verdict: "caution", flags: [{ code: "concentrated_supply", severity: "medium" }] } },
-  }) as Record<string, unknown>), safe(async (req, res) => {
+  }) as Record<string, unknown>), safe(async (req: express.Request, res: express.Response) => {
     const mint = String(req.query.mint ?? "");
     if (!mint) { res.json({ error: "mint query param required" }); return; }
     res.json(await scanToken(mint));
@@ -499,7 +499,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
       },
     },
     output: { example: { score: 42, verdict: "some_history", breakdown: [{ signal: "moltbook_karma", points: 8 }] } },
-  }) as Record<string, unknown>), safe(async (req, res) => {
+  }) as Record<string, unknown>), safe(async (req: express.Request, res: express.Response) => {
     const handle = req.query.handle ? String(req.query.handle) : null;
     const address = req.query.address ? String(req.query.address) : null;
     if (!handle && !address) { res.json({ error: "handle and/or address query param required" }); return; }
@@ -510,7 +510,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     input: { urls: "https://a.com/x,https://b.com/y" },
     inputSchema: { properties: { urls: { type: "string", description: "Comma-separated URLs, max 10" } }, required: ["urls"] },
     output: { example: { count: 2, results: [{ url: "https://a.com/x", payability: "payable", defects: [] }] } },
-  }) as Record<string, unknown>), safe(async (req, res) => {
+  }) as Record<string, unknown>), safe(async (req: express.Request, res: express.Response) => {
     const urls = String(req.query.urls ?? "").split(",").map((u) => u.trim()).filter(Boolean).slice(0, 10);
     if (!urls.length) { res.json({ error: "urls query param required (comma-separated, max 10)" }); return; }
     const results = await Promise.all(urls.map((u) => verifyEndpoint(u)));
@@ -527,7 +527,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
       required: ["chain", "address"],
     },
     output: { example: { isContract: true, erc20: { symbol: "USDC", decimals: 6 }, proxy: null, flags: [] } },
-  }) as Record<string, unknown>), safe(async (req, res) => {
+  }) as Record<string, unknown>), safe(async (req: express.Request, res: express.Response) => {
     const chain = String(req.query.chain ?? "");
     const address = String(req.query.address ?? "");
     if (!chain || !address) { res.json({ error: "chain and address query params required" }); return; }
@@ -535,7 +535,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
   }));
 
   // x402 discovery doc — crawlers and directories index from this.
-  app.get("/.well-known/x402", (_req, res) => {
+  app.get("/.well-known/x402", (_req: express.Request, res: express.Response) => {
     const b = "https://soltools.arideh.info";
     const routes = [
       ["/api/safetoken?mint=<solana-mint>", "Token rug-check: mint/freeze authorities, top-10 concentration, liquidity, sell pressure"],
@@ -563,22 +563,22 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
   });
 
   // Free referral endpoints — transparency is the product.
-  app.get("/api/stats", (_req, res) => {
+  app.get("/api/stats", (_req: express.Request, res: express.Response) => {
     res.json(statsSnapshot());
   });
 
-  app.get("/api/refstats", (req, res) => {
+  app.get("/api/refstats", (req: express.Request, res: express.Response) => {
     const code = validRef(req.query.code);
     if (!code) { res.json({ error: "code query param required ([a-z0-9_-])" }); return; }
     res.json(refStats(code));
   });
 
-  app.get("/api/reflog", (_req, res) => {
+  app.get("/api/reflog", (_req: express.Request, res: express.Response) => {
     res.json(publicLog());
   });
 
   // Free: everything an agent needs to start promoting — links + copy.
-  app.get("/api/promokit", (req, res) => {
+  app.get("/api/promokit", (req: express.Request, res: express.Response) => {
     const code = validRef(req.query.handle);
     if (!code) { res.json({ error: "handle query param required ([a-z0-9_-]) — your public handle becomes your ref code" }); return; }
     const b = "https://soltools.arideh.info";
@@ -615,7 +615,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     if (!r.ok) { res.status(400).json({ error: r.error, usage: CHAIN_USAGE }); return; }
     res.json({ ...r, anchor: "commit this root on-chain, then prove it via /api/attest?chain&tx" });
   };
-  app.get("/api/chain", (req, res) => {
+  app.get("/api/chain", (req: express.Request, res: express.Response) => {
     const b64 = req.query.steps;
     if (typeof b64 !== "string" || !b64) { res.json(CHAIN_USAGE); return; }
     try {
@@ -623,9 +623,9 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
       chainHandler(raw, res);
     } catch { res.status(400).json({ error: "steps must be base64url-encoded JSON array", usage: CHAIN_USAGE }); }
   });
-  app.post("/api/chain", express.json({ limit: "300kb" }), (req, res) => chainHandler(req.body, res));
+  app.post("/api/chain", express.json({ limit: "300kb" }) as express.RequestHandler, (req: express.Request, res: express.Response) => chainHandler(req.body, res));
 
-  app.get("/health", (_req, res) => {
+  app.get("/health", (_req: express.Request, res: express.Response) => {
     res.json({
       status: "ok",
       networks: evmPayTo ? [SOLANA_MAINNET, BASE_MAINNET] : [SOLANA_MAINNET],
