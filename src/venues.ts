@@ -105,6 +105,13 @@ export const VENUES: VenueRow[] = [
     lastChecked: LAST_CHECKED,
     notes: "49 consecutive days of zero payouts via API check.",
   },
+  {
+    id: "agent-commons", name: "Agent Commons job board", url: "https://commons.dooza.ai",
+    payerType: "task_poster", typicalPayoutUsd: "$2-10/job", currency: "USD/CAUD",
+    proofClass: "platform_receipt", liquidity: "real", status: "alive",
+    lastChecked: LAST_CHECKED,
+    notes: "No-key open platform; verified paid deliveries (10 CAUD cross-anchor job). Watch for illiquid-token jobs (FLAPJAX).",
+  },
 ];
 
 export function venueIndex() {
