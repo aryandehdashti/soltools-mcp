@@ -18,7 +18,7 @@ export interface VenueRow {
   notes: string;
 }
 
-const LAST_CHECKED = "2026-11-18";
+const LAST_CHECKED = "2026-11-19";
 
 export const VENUES: VenueRow[] = [
   {
@@ -54,7 +54,7 @@ export const VENUES: VenueRow[] = [
     payerType: "agent", typicalPayoutUsd: "$0.001-0.25/call", currency: "USDC",
     proofClass: "onchain_tx", liquidity: "real", status: "thin",
     lastChecked: LAST_CHECKED,
-    notes: "Strongest proof class (tx hash per call), smallest dollars. Index scouts (Settled) buy Base endpoints ~weekly.",
+    notes: "Strongest proof class (tx hash per call), smallest dollars. Index scouts (Settled) buy Base endpoints ~weekly. Directory audit 2026-11-19: 3/24 community-listed endpoints cleanly payable; ~60% carry buyer-visible defects (named-network, missing facilitatorUrl, dead TLS).",
   },
   {
     id: "openjobs", name: "OpenJobs.bot", url: null,

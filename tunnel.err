@@ -1,0 +1,73 @@
+2026-11-09T22:38:24Z INF Thank you for trying Cloudflare Tunnel. Doing so, without a Cloudflare account, is a quick way to experiment and try it out. However, be aware that these account-less Tunnels have no uptime guarantee, are subject to the Cloudflare Online Services Terms of Use (https://www.cloudflare.com/website-terms/), and Cloudflare reserves the right to investigate your use of Tunnels for violations of such terms. If you intend to use Tunnels in production you should use a pre-created named tunnel by following: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps
+2026-11-09T22:38:24Z INF Requesting new quick Tunnel on trycloudflare.com...
+2026-11-09T22:38:33Z INF +--------------------------------------------------------------------------------------------+
+2026-11-09T22:38:33Z INF |  Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):  |
+2026-11-09T22:38:33Z INF |  https://straight-promising-somehow-hormone.trycloudflare.com                              |
+2026-11-09T22:38:33Z INF +--------------------------------------------------------------------------------------------+
+2026-11-09T22:38:33Z INF Cannot determine default configuration path. No file [config.yml config.yaml] in [~/.cloudflared ~/.cloudflare-warp ~/cloudflare-warp]
+2026-11-09T22:38:33Z INF Version 2026.10.7 (Checksum 2493dbc168923bb3e59e5e7716f71deced92992eea9acd6e9d74f84ac7751343)
+2026-11-09T22:38:33Z INF GOOS: windows, GOVersion: go1.27.3, GoArch: amd64
+2026-11-09T22:38:33Z INF Settings: map[ha-connections:1 no-autoupdate:true protocol:quic url:http://localhost:4022]
+2026-11-09T22:38:33Z INF cloudflared will not automatically update on Windows systems.
+2026-11-09T22:38:45Z ERR Failed to fetch features, default to disable error="lookup cfd-features.argotunnel.com: dnsquery: This operation returned because the timeout period expired."
+2026-11-09T22:38:45Z INF Generated Connector ID: fabf5f88-2e62-4943-9948-17bdbcfd2d75
+2026-11-09T22:38:45Z INF Initial protocol quic
+2026-11-09T22:38:45Z INF ICMP proxy will use 172.18.0.1 as source for IPv4
+2026-11-09T22:38:45Z INF ICMP proxy will use fe80::d9a6:c3cf:d4aa:9b46 in zone singbox_tun as source for IPv6
+2026-11-09T22:39:12Z ERR edge discovery: error looking up Cloudflare edge IPs: the DNS query failed error="lookup argotunnel.com: dnsquery: This operation returned because the timeout period expired." event=0
+2026-11-09T22:39:12Z ERR edge discovery: error looking up Cloudflare edge IPs: the DNS query failed error="lookup argotunnel.com: dnsquery: This operation returned because the timeout period expired." event=0
+2026-11-09T22:39:12Z ERR Please try the following things to diagnose this issue: event=0
+2026-11-09T22:39:12Z ERR   1. ensure that argotunnel.com is returning "origintunneld" service records. event=0
+2026-11-09T22:39:12Z ERR      Run your system's equivalent of: dig srv _origintunneld._tcp.argotunnel.com event=0
+2026-11-09T22:39:12Z ERR Please try the following things to diagnose this issue: event=0
+2026-11-09T22:39:12Z ERR   2. ensure that your DNS resolver is not returning compressed SRV records. event=0
+2026-11-09T22:39:12Z ERR   1. ensure that argotunnel.com is returning "origintunneld" service records. event=0
+2026-11-09T22:39:12Z ERR      Run your system's equivalent of: dig srv _origintunneld._tcp.argotunnel.com event=0
+2026-11-09T22:39:12Z ERR      See GitHub issue https://github.com/golang/go/issues/27546 event=0
+2026-11-09T22:39:12Z ERR      For example, you could use Cloudflare's 1.1.1.1 as your resolver: event=0
+2026-11-09T22:39:12Z ERR      https://developers.cloudflare.com/1.1.1.1/setting-up-1.1.1.1/ event=0
+2026-11-09T22:39:12Z ERR   2. ensure that your DNS resolver is not returning compressed SRV records. event=0
+2026-11-09T22:39:12Z INF +----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+2026-11-09T22:39:12Z ERR      See GitHub issue https://github.com/golang/go/issues/27546 event=0
+2026-11-09T22:39:12Z INF |                                                                                                  CONNECTIVITY PRE-CHECKS                                                                                                   |
+2026-11-09T22:39:12Z ERR      For example, you could use Cloudflare's 1.1.1.1 as your resolver: event=0
+2026-11-09T22:39:12Z ERR      https://developers.cloudflare.com/1.1.1.1/setting-up-1.1.1.1/ event=0
+2026-11-09T22:39:12Z INF +----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+2026-11-09T22:39:12Z INF |  COMPONENT         TARGET                     STATUS  DETAILS                                                                                                                                                              |
+2026-11-09T22:39:12Z INF cloudflared does not support loading the system root certificate pool on Windows. Please use --origin-ca-pool <PATH> to specify the path to the certificate pool
+2026-11-09T22:39:12Z INF |  DNS Resolution    region1.v2.argotunnel.com  FAIL    Could not lookup srv records on _v2-origintunneld._tcp.argotunnel.com: lookup argotunnel.com: dnsquery: This operation returned because the timeout period expired.  |
+2026-11-09T22:39:12Z INF |  DNS Resolution    region2.v2.argotunnel.com  FAIL    Could not lookup srv records on _v2-origintunneld._tcp.argotunnel.com: lookup argotunnel.com: dnsquery: This operation returned because the timeout period expired.  |
+2026-11-09T22:39:12Z INF |  UDP Connectivity  region1.v2.argotunnel.com  SKIP    DNS prerequisite failed                                                                                                                                              |
+2026-11-09T22:39:12Z INF |  UDP Connectivity  region2.v2.argotunnel.com  SKIP    DNS prerequisite failed                                                                                                                                              |
+2026-11-09T22:39:12Z INF |  TCP Connectivity  region1.v2.argotunnel.com  SKIP    DNS prerequisite failed                                                                                                                                              |
+2026-11-09T22:39:12Z INF |  TCP Connectivity  region2.v2.argotunnel.com  SKIP    DNS prerequisite failed                                                                                                                                              |
+2026-11-09T22:39:12Z INF |  Cloudflare API    api.cloudflare.com:443     FAIL    API Connection failed                                                                                                                                                |
+2026-11-09T22:39:12Z INF |  ERROR: Ensure your DNS resolver can resolve 'region1.v2.argotunnel.com'. Run: dig A region1.v2.argotunnel.com @1.1.1.1. If that fails, contact your network administrator.                                                |
+2026-11-09T22:39:12Z INF |  ERROR: Ensure your DNS resolver can resolve 'region2.v2.argotunnel.com'. Run: dig A region2.v2.argotunnel.com @1.1.1.1. If that fails, contact your network administrator.                                                |
+2026-11-09T22:39:12Z INF |  ERROR: cloudflared will still run, but automatic software updates are unavailable. Ensure port 443 TCP to api.cloudflare.com is open if you want auto-updates.                                                            |
+2026-11-09T22:39:12Z INF |                                                                                                                                                                                                                            |
+2026-11-09T22:39:12Z INF |  SUMMARY: Environment has critical failures. cloudflared may not be able to establish a tunnel.                                                                                                                            |
+2026-11-09T22:39:12Z INF +----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+2026-11-09T22:39:12Z INF precheck component="DNS Resolution" details="Could not lookup srv records on _v2-origintunneld._tcp.argotunnel.com: lookup argotunnel.com: dnsquery: This operation returned because the timeout period expired." run_id=35dc2b7a-49f7-4a65-bb0c-ee91fe2724ce status=fail target=region1.v2.argotunnel.com
+2026-11-09T22:39:12Z INF precheck component="DNS Resolution" details="Could not lookup srv records on _v2-origintunneld._tcp.argotunnel.com: lookup argotunnel.com: dnsquery: This operation returned because the timeout period expired." run_id=35dc2b7a-49f7-4a65-bb0c-ee91fe2724ce status=fail target=region2.v2.argotunnel.com
+2026-11-09T22:39:12Z INF precheck component="UDP Connectivity" details="DNS prerequisite failed" run_id=35dc2b7a-49f7-4a65-bb0c-ee91fe2724ce status=skip target=region1.v2.argotunnel.com
+2026-11-09T22:39:12Z INF precheck component="UDP Connectivity" details="DNS prerequisite failed" run_id=35dc2b7a-49f7-4a65-bb0c-ee91fe2724ce status=skip target=region2.v2.argotunnel.com
+2026-11-09T22:39:12Z INF precheck component="TCP Connectivity" details="DNS prerequisite failed" run_id=35dc2b7a-49f7-4a65-bb0c-ee91fe2724ce status=skip target=region1.v2.argotunnel.com
+2026-11-09T22:39:12Z INF precheck component="TCP Connectivity" details="DNS prerequisite failed" run_id=35dc2b7a-49f7-4a65-bb0c-ee91fe2724ce status=skip target=region2.v2.argotunnel.com
+2026-11-09T22:39:12Z INF precheck component="Cloudflare API" details="API Connection failed" run_id=35dc2b7a-49f7-4a65-bb0c-ee91fe2724ce status=fail target=api.cloudflare.com:443
+2026-11-09T22:39:12Z INF precheck complete hard_fail=true run_id=35dc2b7a-49f7-4a65-bb0c-ee91fe2724ce suggested_protocol=quic
+2026-11-09T22:39:12Z INF ICMP proxy will use 172.18.0.1 as source for IPv4
+2026-11-09T22:39:12Z INF ICMP proxy will use fe80::d9a6:c3cf:d4aa:9b46 in zone singbox_tun as source for IPv6
+2026-11-09T22:39:12Z INF Starting metrics server on 127.0.0.1:20241/metrics
+2026-11-09T22:39:39Z ERR edge discovery: error looking up Cloudflare edge IPs: the DNS query failed error="lookup argotunnel.com: dnsquery: This operation returned because the timeout period expired." event=0
+2026-11-09T22:39:39Z ERR Please try the following things to diagnose this issue: event=0
+2026-11-09T22:39:39Z ERR   1. ensure that argotunnel.com is returning "origintunneld" service records. event=0
+2026-11-09T22:39:39Z ERR      Run your system's equivalent of: dig srv _origintunneld._tcp.argotunnel.com event=0
+2026-11-09T22:39:39Z ERR   2. ensure that your DNS resolver is not returning compressed SRV records. event=0
+2026-11-09T22:39:39Z ERR      See GitHub issue https://github.com/golang/go/issues/27546 event=0
+2026-11-09T22:39:39Z ERR      For example, you could use Cloudflare's 1.1.1.1 as your resolver: event=0
+2026-11-09T22:39:39Z ERR      https://developers.cloudflare.com/1.1.1.1/setting-up-1.1.1.1/ event=0
+2026-11-09T22:39:39Z INF Tunnel server stopped
+2026-11-09T22:39:39Z ERR Initiating shutdown error="Could not lookup srv records on _v2-origintunneld._tcp.argotunnel.com: lookup argotunnel.com: dnsquery: This operation returned because the timeout period expired."
+2026-11-09T22:39:39Z INF Metrics server stopped
+Could not lookup srv records on _v2-origintunneld._tcp.argotunnel.com: lookup argotunnel.com: dnsquery: This operation returned because the timeout period expired.
