@@ -70,11 +70,15 @@ function inputGated(body: string, status: number | null): string | null {
   return m ? m[0] : null;
 }
 
+// Bodies larger than this were once silently truncated mid-JSON; kept as a
+// named constant so probe logs can distinguish truncation from malformed JSON.
+const PARSE_WINDOW = 65536;
+
 // Heuristics for a resource-server descriptor (discovery doc, not a priced route).
 function descriptorHints(body: string): string[] {
   const hints: string[] = [];
   try {
-    const d = JSON.parse(body.slice(0, 65536)) as Record<string, unknown>;
+    const d = JSON.parse(body.slice(0, PARSE_WINDOW)) as Record<string, unknown>;
     if (d.x402Version) hints.push("x402Version:" + String(d.x402Version));
     if (typeof d.service === "string") hints.push("service:" + d.service.slice(0, 60));
     if (typeof d.name === "string") hints.push("name:" + d.name.slice(0, 60));
@@ -95,7 +99,8 @@ function descriptorHints(body: string): string[] {
     // A body that looks like a descriptor but fails to parse is its own
     // probe-log entry — never let a documented/free verdict hide a parse miss.
     const t = body.trimStart().slice(0, 8192);
-    if (t.startsWith("{") && /"(x402Version|resources|endpoints|accepts|payTo)"/.test(t)) hints.push("extraction_failed");
+    if (t.startsWith("{") && /"(x402Version|resources|endpoints|accepts|payTo)"/.test(t))
+      hints.push(`extraction_failed:${body.length}:${PARSE_WINDOW}`);
   }
   return hints;
 }
@@ -145,6 +150,14 @@ async function probeOnce(url: string, method: string): Promise<ProbeResult> {
   return { method, status: null, latency_ms: Date.now() - start, quote: null, error: "too many redirects" };
 }
 
+// Display-only hints: the raw string stays in the defect; the likely CAIP-2
+// value is shown beside it so a parsing-402 vs settling-payment gap is visible.
+const CAIP2_HINTS: Record<string, string> = {
+  base: "eip155:8453", ethereum: "eip155:1", mainnet: "eip155:1", eth: "eip155:1",
+  polygon: "eip155:137", arbitrum: "eip155:42161", optimism: "eip155:10",
+  solana: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+};
+
 // Pick the next method to try given a 405 Allow header (skip OPTIONS/HEAD).
 function allowMethod(allow: string | null | undefined, tried: Set<string>): string | null {
   if (!allow) return null;
@@ -188,8 +201,12 @@ export async function verifyEndpoint(rawUrl: string): Promise<{
     if (p.status === 402 && !p.quote)
       defects.push({ code: "malformed_402", detail: p.method + " returned 402 but no parseable payment requirements (PAYMENT-REQUIRED header or JSON body)" });
     if (p.quote) {
-      if (!p.quote.network || !/^\w+:\w+/.test(p.quote.network))
-        defects.push({ code: "bad_network", detail: p.method + " quote network missing or not CAIP-2 style: " + p.quote.network });
+      if (!p.quote.network) {
+        defects.push({ code: "bad_network", detail: p.method + " quote network missing" });
+      } else if (!/^\w+:\w+/.test(p.quote.network)) {
+        const hint = CAIP2_HINTS[p.quote.network.toLowerCase()] ? " — likely CAIP-2: " + CAIP2_HINTS[p.quote.network.toLowerCase()] : "";
+        defects.push({ code: "network_not_caip2", detail: p.method + " quote network is a named string, not CAIP-2: " + p.quote.network + hint });
+      }
       if (!p.quote.payTo) defects.push({ code: "no_payto", detail: p.method + " quote has no payTo" });
       if (!p.quote.asset) defects.push({ code: "no_asset", detail: p.method + " quote has no asset" });
       if (!p.quote.amount || !/^\d+$/.test(p.quote.amount))
@@ -197,7 +214,7 @@ export async function verifyEndpoint(rawUrl: string): Promise<{
     }
   };
   const payableFrom = (p: ProbeResult) =>
-    defects.some((d) => ["bad_network", "no_payto", "no_asset", "unpriced"].includes(d.code)) ? "broken" : "payable";
+    defects.some((d) => ["bad_network", "network_not_caip2", "no_payto", "no_asset", "unpriced"].includes(d.code)) ? "broken" : "payable";
 
   inspect(g);
 
@@ -207,8 +224,10 @@ export async function verifyEndpoint(rawUrl: string): Promise<{
 
   // GET 200 with descriptor hints → documented; probe listed resource URLs if any.
   if (g.status === 200 && g.hints && g.hints.length > 0) {
-    if (g.hints.includes("extraction_failed")) {
-      defects.push({ code: "extraction_failed", detail: "body looks like a descriptor doc but JSON.parse failed — probe the service's documented routes manually" });
+    const xf = g.hints.find((h) => h.startsWith("extraction_failed"));
+    if (xf) {
+      const [, bl, pw] = xf.split(":");
+      defects.push({ code: "extraction_failed", detail: `body looks like a descriptor doc but JSON.parse failed (body ${bl}B, parse window ${pw}B — truncation reads differently from malformed JSON)` });
     }
     const resTargets = g.hints
       .filter((h) => h.startsWith("resource:") || h.startsWith("endpoint:") || h.startsWith("rel_resource:"))
