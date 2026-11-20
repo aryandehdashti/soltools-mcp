@@ -1,9 +1,14 @@
-export interface QuoteInfo {
+export interface QuoteLeg {
   network: string | null;
   scheme: string | null;
   asset: string | null;
   payTo: string | null;
   amount: string | null;
+}
+
+export interface QuoteInfo extends QuoteLeg {
+  // Every accepts[] leg — multi-network endpoints declare one leg per chain.
+  legs: QuoteLeg[];
 }
 
 export interface ProbeResult {
@@ -50,14 +55,17 @@ function parseQuote(resp: Response, body: string): QuoteInfo | null {
   }
   const accepts = (doc as { accepts?: unknown[] })?.accepts;
   if (!Array.isArray(accepts) || accepts.length === 0) return null;
-  const a = accepts[0] as Record<string, unknown>;
-  return {
-    network: (a.network as string) ?? null,
-    scheme: (a.scheme as string) ?? null,
-    asset: (a.asset as string) ?? null,
-    payTo: (a.payTo as string) ?? null,
-    amount: (a.amount as string) ?? ((a.maxAmountRequired as string) ?? null),
-  };
+  const legs: QuoteLeg[] = accepts.slice(0, 12).map((x) => {
+    const a = x as Record<string, unknown>;
+    return {
+      network: (a.network as string) ?? null,
+      scheme: (a.scheme as string) ?? null,
+      asset: (a.asset as string) ?? null,
+      payTo: (a.payTo as string) ?? null,
+      amount: (a.amount as string) ?? ((a.maxAmountRequired as string) ?? null),
+    };
+  });
+  return { ...legs[0], legs };
 }
 
 // Heuristics for "the gate exists but input was missing" — the
@@ -201,16 +209,21 @@ export async function verifyEndpoint(rawUrl: string): Promise<{
     if (p.status === 402 && !p.quote)
       defects.push({ code: "malformed_402", detail: p.method + " returned 402 but no parseable payment requirements (PAYMENT-REQUIRED header or JSON body)" });
     if (p.quote) {
-      if (!p.quote.network) {
-        defects.push({ code: "bad_network", detail: p.method + " quote network missing" });
-      } else if (!/^\w+:\w+/.test(p.quote.network)) {
-        const hint = CAIP2_HINTS[p.quote.network.toLowerCase()] ? " — likely CAIP-2: " + CAIP2_HINTS[p.quote.network.toLowerCase()] : "";
-        defects.push({ code: "network_not_caip2", detail: p.method + " quote network is a named string, not CAIP-2: " + p.quote.network + hint });
-      }
-      if (!p.quote.payTo) defects.push({ code: "no_payto", detail: p.method + " quote has no payTo" });
-      if (!p.quote.asset) defects.push({ code: "no_asset", detail: p.method + " quote has no asset" });
-      if (!p.quote.amount || !/^\d+$/.test(p.quote.amount))
-        defects.push({ code: "unpriced", detail: p.method + " quote amount missing or not base units: " + p.quote.amount });
+      const legs = p.quote.legs ?? [p.quote];
+      const tag = (i: number) => (legs.length > 1 ? `${p.method} accepts[${i}]` : p.method + " quote");
+      legs.forEach((leg, i) => {
+        const t = tag(i);
+        if (!leg.network) {
+          defects.push({ code: "bad_network", detail: t + " network missing" });
+        } else if (!/^\w+:\w+/.test(leg.network)) {
+          const hint = CAIP2_HINTS[leg.network.toLowerCase()] ? " — likely CAIP-2: " + CAIP2_HINTS[leg.network.toLowerCase()] : "";
+          defects.push({ code: "network_not_caip2", detail: t + " network is a named string, not CAIP-2: " + leg.network + hint });
+        }
+        if (!leg.payTo) defects.push({ code: "no_payto", detail: t + " has no payTo" });
+        if (!leg.asset) defects.push({ code: "no_asset", detail: t + " has no asset" });
+        if (!leg.amount || !/^\d+$/.test(leg.amount))
+          defects.push({ code: "unpriced", detail: t + " amount missing or not base units: " + leg.amount });
+      });
     }
   };
   const payableFrom = (p: ProbeResult) =>

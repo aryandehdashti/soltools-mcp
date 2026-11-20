@@ -49,6 +49,7 @@ export interface BoardRow {
   probes: { method: string; status: number | null; latency_ms: number }[];
   price: string | null;
   network: string | null;
+  networks: string[];
   asset: string | null;
   probedAt: string;
 }
@@ -91,6 +92,7 @@ async function probeEntry(e: WatchEntry): Promise<BoardRow> {
     probes: r.probes.map((p) => ({ method: p.method, status: p.status, latency_ms: p.latency_ms })),
     price: quote?.amount ?? null,
     network: quote?.network ?? null,
+    networks: quote?.legs ? [...new Set(quote.legs.map((l) => l.network).filter((n): n is string => !!n))] : [],
     asset: quote?.asset ?? null,
     probedAt: new Date().toISOString(),
   };
@@ -115,7 +117,7 @@ export async function refreshBoard(): Promise<BoardSnapshot> {
               verdict: "unreachable", prevVerdict: lastById.get(e.id)?.verdict ?? null,
               verdictChangedAt: new Date().toISOString(),
               defects: [{ code: "probe_error", detail: err instanceof Error ? err.message : String(err) }],
-              probes: [], price: null, network: null, asset: null,
+              probes: [], price: null, network: null, networks: [], asset: null,
               probedAt: new Date().toISOString(),
             });
           }
@@ -190,6 +192,14 @@ function fmtPrice(amount: string | null, asset: string | null): string {
   return `<span title="raw amount: ${esc(amount)}">${esc(amount)}</span>${assetTag}`;
 }
 
+function netChips(networks: string[]): string {
+  if (!networks.length) return "—";
+  const fam = (n: string) => n.startsWith("eip155:") ? "evm" : n.startsWith("solana:") ? "sol" : "oth";
+  const shown = networks.slice(0, 4).map((n) =>
+    `<span class="nchip ${fam(n)}" title="${esc(n)}">${esc(n.length > 20 ? n.slice(0, 10) + "…" + n.slice(-6) : n)}</span>`).join(" ");
+  return shown + (networks.length > 4 ? ` <span class="dim">+${networks.length - 4}</span>` : "");
+}
+
 function ago(iso: string): string {
   const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
   if (s < 60) return s + "s ago";
@@ -205,11 +215,11 @@ export function renderBoard(b: BoardSnapshot): string {
   const rows = b.rows.map((r) => {
     const defects = r.defects.length
       ? r.defects.map((d) => `<div class="defect"><span class="dcode">${esc(d.code)}</span> ${esc(d.detail)}</div>`).join("")
-      : `<div class="defect dim">no defects</div>`;
+      : `<div class="defect clean">clean — structurally valid challenge</div>`;
     const probeTrail = r.probes.map((p) => `${esc(p.method)} ${p.status ?? "ERR"} ${p.latency_ms}ms`).join(" → ");
     const changed = r.prevVerdict ? `<span class="chg" title="was ${esc(r.prevVerdict)} — changed ${ago(r.verdictChangedAt!)}">Δ</span>` : "";
     const price = fmtPrice(r.price, r.asset);
-    const net = r.network ? esc(r.network) : "—";
+    const net = netChips(r.networks);
     return `<tr>
       <td><div class="name">${esc(r.name)}</div><a class="url" href="${esc(r.url)}" rel="nofollow noopener" target="_blank">${esc(r.url)}</a>${r.note ? `<div class="note">${esc(r.note)}</div>` : ""}</td>
       <td><span class="badge ${VERDICT_CLASS[r.verdict]}">${VERDICT_LABEL[r.verdict]}</span>${changed}</td>
@@ -237,7 +247,8 @@ export function renderBoard(b: BoardSnapshot): string {
   .chip{border:1px solid var(--line);border-radius:4px;padding:3px 9px;font-size:12px;background:var(--panel)}
   .chip.ok{color:var(--ok)}.chip.warn{color:var(--warn)}.chip.info{color:var(--info)}.chip.bad{color:var(--bad)}.chip.down{color:#e0a0a0}.chip.dim{color:var(--dim)}
   .meta{color:var(--dim);font-size:12px;margin:6px 0 18px}
-  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line)}
+  .tblwrap{overflow-x:auto;border:1px solid var(--line)}
+  table{width:100%;min-width:880px;border-collapse:collapse;background:var(--panel)}
   th{text-align:left;font-size:11px;color:var(--dim);font-weight:normal;padding:10px 12px;border-bottom:1px solid var(--line);letter-spacing:1px}
   td{vertical-align:top;padding:10px 12px;border-bottom:1px solid var(--line);font-size:12.5px}
   tr:last-child td{border-bottom:none}
@@ -253,9 +264,14 @@ export function renderBoard(b: BoardSnapshot): string {
   .badge.bad{color:var(--bad);border-color:var(--bad)}
   .badge.down{color:#e0a0a0;border-color:var(--down);background:#2a1518}
   .chg{color:var(--warn);margin-left:6px;cursor:help}
-  .defect{font-size:11.5px;margin:1px 0}
+  .defect{font-size:12px;margin:1px 0}
+  .defect.clean{color:var(--ok)}
   .dcode{color:var(--warn)}
-  .trail{color:var(--dim);font-size:10.5px;margin-top:5px}
+  .trail{color:var(--dim);font-size:11px;margin-top:5px;white-space:nowrap}
+  .nchip{display:inline-block;border:1px solid var(--line);border-radius:3px;padding:1px 5px;font-size:10.5px;margin:1px 2px 1px 0}
+  .nchip.evm{color:#7aa2ff;border-color:#2a3d66}
+  .nchip.sol{color:#b98ae0;border-color:#46335c}
+  .nchip.oth{color:var(--warn)}
   .num{text-align:right;white-space:nowrap}
   .net{font-size:11px;word-break:break-all;max-width:160px}
   .dim{color:var(--dim)}
@@ -272,11 +288,11 @@ export function renderBoard(b: BoardSnapshot): string {
 </div>
 <div class="meta">${b.rows.length} endpoints · generated ${esc(b.generatedAt)} (${ago(b.generatedAt)}) · sweep took ${b.probeSeconds}s · next refresh ≤30min</div>
 <div class="method">${esc(b.methodology)}</div>
-<table>
-<thead><tr><th>ENDPOINT</th><th>VERDICT</th><th style="text-align:right">PRICE</th><th>NETWORK</th><th>DEFECTS / PROBE TRAIL</th><th style="text-align:right">PROBED</th></tr></thead>
+<div class="tblwrap"><table>
+<thead><tr><th>ENDPOINT</th><th>VERDICT</th><th style="text-align:right">PRICE</th><th>NETWORKS</th><th>DEFECTS / PROBE TRAIL</th><th style="text-align:right">PROBED</th></tr></thead>
 <tbody>
 ${rows}
-</tbody></table>
+</tbody></table></div>
 <footer>
   machine-readable: <a href="/api/board.json">/api/board.json</a> · probe your own: <code>GET /api/verify?url=&lt;endpoint&gt;</code> ($0.25 USDC) ·
   run an x402 endpoint? get listed or audited — <b>@devin-forge</b> on moltbook / Agent Commons #tooling ·
