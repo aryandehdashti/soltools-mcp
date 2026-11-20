@@ -30,6 +30,7 @@ import { inspectContract } from "./contract.js";
 import { validRef, recordRefSale, refStats, publicLog, REF_PAYOUT_PCT } from "./ref.js";
 import { markChallenge, markSettled, statsSnapshot } from "./stats.js";
 import { buildChain, CHAIN_USAGE } from "./chain.js";
+import { getBoard, refreshBoard, renderBoard, startBoardLoop } from "./board.js";
 
 config();
 
@@ -557,7 +558,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
       resources: routes.map(([url, description]) => ({
         url: b + url, method: "GET", priceUsd: 0.25, asset: "USDC", description,
       })),
-      free: { stats: b + "/api/stats", reflog: b + "/api/reflog", promokit: b + "/api/promokit?handle=<your-handle>" },
+      free: { stats: b + "/api/stats", reflog: b + "/api/reflog", promokit: b + "/api/promokit?handle=<your-handle>", board: b + "/board", boardJson: b + "/api/board.json" },
       referrals: "append &ref=<handle> to any resource URL — 20% attributed sales weekly, public ledger",
     });
   });
@@ -625,13 +626,26 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
   });
   app.post("/api/chain", express.json({ limit: "300kb" }) as express.RequestHandler, (req: express.Request, res: express.Response) => chainHandler(req.body, res));
 
+  // Settle Board — free public report card (HTML + JSON twin).
+  app.get("/board", (_req: express.Request, res: express.Response) => {
+    const b = getBoard();
+    if (!b) { res.status(503).type("html").send("<p>board warming up — first sweep in progress, retry in ~30s</p>"); return; }
+    res.type("html").send(renderBoard(b));
+  });
+
+  app.get("/api/board.json", (_req: express.Request, res: express.Response) => {
+    const b = getBoard();
+    if (!b) { res.status(503).json({ error: "board warming up — first sweep in progress" }); return; }
+    res.json(b);
+  });
+
   app.get("/health", (_req: express.Request, res: express.Response) => {
     res.json({
       status: "ok",
       networks: evmPayTo ? [SOLANA_MAINNET, BASE_MAINNET] : [SOLANA_MAINNET],
       payment: "x402 exact / USDC",
       tools: { free: ["ping", "list_tools"], paid: ["sol_balance $0.01", "sol_token_price $0.01", "sol_wallet_analysis $0.02", "sol_tx_lookup $0.01"] },
-      rest: { free: ["GET /health", "GET /api/refstats", "GET /api/reflog"], paid: ["GET /api/balance $0.25", "GET /api/token $0.25", "GET /api/tx $0.25", "GET /api/verify?url=… $0.25", "GET /api/venues $0.25", "GET /api/attest?chain&tx $0.25", "GET /api/safetoken?mint=… $0.25", "GET /api/trust?handle|address $0.25", "GET /api/bulkverify?urls=… $0.25", "GET /api/contract?chain&address $0.25"] },
+      rest: { free: ["GET /health", "GET /board", "GET /api/board.json", "GET /api/refstats", "GET /api/reflog"], paid: ["GET /api/balance $0.25", "GET /api/token $0.25", "GET /api/tx $0.25", "GET /api/verify?url=… $0.25", "GET /api/venues $0.25", "GET /api/attest?chain&tx $0.25", "GET /api/safetoken?mint=… $0.25", "GET /api/trust?handle|address $0.25", "GET /api/bulkverify?urls=… $0.25", "GET /api/contract?chain&address $0.25"] },
       referrals: "?ref=<handle> on any paid route — " + REF_PAYOUT_PCT + "% of attributed sales paid weekly (see /api/reflog)",
     });
   });
@@ -640,6 +654,7 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     console.log("SolTools MCP running on http://localhost:" + port);
     console.log("Network: " + SOLANA_MAINNET + " | PayTo: " + payTo);
     console.log("Tools: ping, list_tools (free) | sol_balance, sol_token_price, sol_wallet_analysis, sol_tx_lookup (paid)");
+    startBoardLoop();
   });
 }
 
