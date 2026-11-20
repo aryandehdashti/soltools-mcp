@@ -74,23 +74,28 @@ function inputGated(body: string, status: number | null): string | null {
 function descriptorHints(body: string): string[] {
   const hints: string[] = [];
   try {
-    const d = JSON.parse(body.slice(0, 8192)) as Record<string, unknown>;
+    const d = JSON.parse(body.slice(0, 65536)) as Record<string, unknown>;
     if (d.x402Version) hints.push("x402Version:" + String(d.x402Version));
     if (typeof d.service === "string") hints.push("service:" + d.service.slice(0, 60));
     if (typeof d.name === "string") hints.push("name:" + d.name.slice(0, 60));
     if (typeof d.method_required === "string") hints.push("method_required:" + d.method_required);
     if (Array.isArray(d.resources)) {
       for (const r of d.resources.slice(0, 3)) {
-        const ru = (r as Record<string, unknown>)?.resource ?? (r as Record<string, unknown>)?.url ?? (r as Record<string, unknown>)?.endpoint;
-        if (typeof ru === "string" && /^https?:\/\//.test(ru)) hints.push("resource:" + ru);
+        const ro = r as Record<string, unknown>;
+        const ru = ro?.resource ?? ro?.url ?? ro?.endpoint;
+        const rm = typeof ro?.method === "string" && /^[A-Z]+$/.test(ro.method.toUpperCase()) ? ro.method.toUpperCase() + "|" : "";
+        if (typeof ru === "string") hints.push((/^https?:\/\//.test(ru) ? "resource:" : "rel_resource:") + rm + ru);
       }
     }
-    if (typeof d.endpoint === "string" && /^https?:\/\//.test(d.endpoint)) hints.push("endpoint:" + d.endpoint);
+    if (typeof d.endpoint === "string") hints.push((/^https?:\/\//.test(d.endpoint) ? "endpoint:" : "rel_resource:") + d.endpoint);
     if (Array.isArray(d.endpoints)) {
-      for (const e of d.endpoints.slice(0, 3)) if (typeof e === "string") hints.push("route:" + e);
+      for (const e of d.endpoints.slice(0, 3)) if (typeof e === "string") hints.push((/^https?:\/\//.test(e) ? "resource:" : "route:") + e);
     }
   } catch {
-    /* not JSON */
+    // A body that looks like a descriptor but fails to parse is its own
+    // probe-log entry — never let a documented/free verdict hide a parse miss.
+    const t = body.trimStart().slice(0, 8192);
+    if (t.startsWith("{") && /"(x402Version|resources|endpoints|accepts|payTo)"/.test(t)) hints.push("extraction_failed");
   }
   return hints;
 }
@@ -202,25 +207,47 @@ export async function verifyEndpoint(rawUrl: string): Promise<{
 
   // GET 200 with descriptor hints → documented; probe listed resource URLs if any.
   if (g.status === 200 && g.hints && g.hints.length > 0) {
-    const resUrls = g.hints
-      .filter((h) => h.startsWith("resource:") || h.startsWith("endpoint:"))
-      .map((h) => h.split(":").slice(1).join(":"));
-    if (resUrls.length > 0) {
-      const ru = resUrls[0];
+    if (g.hints.includes("extraction_failed")) {
+      defects.push({ code: "extraction_failed", detail: "body looks like a descriptor doc but JSON.parse failed — probe the service's documented routes manually" });
+    }
+    const resTargets = g.hints
+      .filter((h) => h.startsWith("resource:") || h.startsWith("endpoint:") || h.startsWith("rel_resource:"))
+      .map((h) => {
+        let spec = h.split(":").slice(1).join(":");
+        let method = "GET";
+        const mp = spec.match(/^([A-Z]+)\|/);
+        if (mp) { method = mp[1]; spec = spec.slice(mp[0].length); }
+        try {
+          return { method, url: new URL(spec, url.toString()).toString() }; // resolve relative to the doc's own origin
+        } catch {
+          return null;
+        }
+      })
+      .filter((u): u is { method: string; url: string } => u !== null);
+    if (resTargets.length > 0) {
+      const rt = resTargets[0];
       try {
-        const ru2 = new URL(ru);
+        const ru2 = new URL(rt.url);
         if (!isPrivateHost(ru2.hostname) && ru2.toString() !== rawUrl) {
-          probes.push(await probeOnce(ru2.toString(), "GET"));
-          const rp = probes[probes.length - 1];
+          probes.push(await probeOnce(ru2.toString(), rt.method));
+          let rp = probes[probes.length - 1];
+          // Declared method 405ed → fall back to GET on the resource.
+          if (rp.status === 405) {
+            probes.push(await probeOnce(ru2.toString(), "GET"));
+            rp = probes[probes.length - 1];
+          }
           inspect(rp);
           if (rp.status === 402 && rp.quote) {
-            defects.push({ code: "descriptor_ok", detail: "discovery doc resolves to payable resource " + ru });
+            defects.push({ code: "descriptor_ok", detail: "discovery doc resolves to payable resource " + rt.url + " (" + rt.method + ")" });
             return { url: rawUrl, payability: payableFrom(rp), defects, probes };
+          }
+          if (rp.status === null) {
+            defects.push({ code: "resource_unreachable", detail: "listed resource " + rt.url + " failed: " + (rp.error ?? "network error") });
           }
         }
       } catch { /* bad resource URL */ }
     }
-    if (resUrls.length > 0) {
+    if (resTargets.length > 0) {
       defects.push({ code: "descriptor_doc", detail: "returns a resource-server descriptor (200), not a priced challenge — probe its listed resources directly" });
       return { url: rawUrl, payability: "documented", defects, probes };
     }
