@@ -7,6 +7,7 @@
  */
 
 import { verifyEndpoint, type Defect } from "./verify.js";
+import { kertivoRows, normUrl, type KertivoRow } from "./kertivo.js";
 
 export interface WatchEntry {
   id: string;
@@ -34,6 +35,13 @@ export const WATCHLIST: WatchEntry[] = [
   { id: "delvorn", name: "delvorn test asset", url: "https://delvorn.site/api/x402/test-asset", note: "directory listing" },
   { id: "maha-compress", name: "maha compress API", url: "https://www.mahastrategies.com/api/v1/compress", note: "directory listing; looked auth-gated not x402" },
   { id: "simlab", name: "simlab market-regime descriptor", url: "https://simlab.measmony.me/x402/info", note: "peer veto-regime service; added after thread exchange" },
+  // Kertivo Trust Index overlap rows — they pay real USDC and publish the tx;
+  // the side-by-side column shows challenge-level vs paid-level on the same URL.
+  { id: "blockrun-chat", name: "BlockRun chat completions", url: "https://blockrun.ai/api/v1/chat/completions", note: "Kertivo overlap; graded A paid-level" },
+  { id: "coinflip402", name: "coinflip402 API", url: "https://coinflip402.vercel.app/api/coinflip", note: "Kertivo overlap; graded F — signed 402 refused settlement" },
+  { id: "fetcher-news", name: "google-news fetcher search", url: "https://google-news.fetcher.sh/api/search", note: "Kertivo overlap; graded F — settled but nothing usable back" },
+  { id: "x402node-gas", name: "x402node gas oracle", url: "https://api.x402node.dev/chain/gas-oracle", note: "Kertivo overlap; graded C-went-dark, unpaid 402 still valid at their run" },
+  { id: "eucompliance-price", name: "eucompliance price feed", url: "https://api.eucompliance.tools/x402/price", note: "Kertivo overlap; ungraded cohort, unpaid 402 valid at their run" },
 ];
 
 export type BoardVerdict = "payable" | "payable-conditional" | "documented" | "free" | "broken" | "throttled" | "error" | "unreachable";
@@ -53,6 +61,8 @@ export interface BoardRow {
   networks: string[];
   asset: string | null;
   probedAt: string;
+  kertivo: KertivoRow | null;
+  missStreak: number;
 }
 
 export interface BoardSnapshot {
@@ -67,7 +77,8 @@ const METHODOLOGY =
   "Each row is cold-probed live: GET, then descriptor-declared/Allow/POST fallbacks. " +
   "payable = 402 challenge returned AND requirements structurally valid (CAIP-2 network, payTo, asset, base-unit amount). " +
   "We never submit payment — nothing here claims settlement; that needs a paid end-to-end check. " +
-  "THROTTLED/ERROR/DOWN are transport states (429 refusal, 5xx fault, net-fail), not paywall verdicts. " +
+  "THROTTLED/ERROR/DOWN are transport states (429 refusal, 5xx fault, net-fail), not paywall verdicts; DOWN needs 2 consecutive misses. " +
+  "PAID column = Kertivo Trust Index grade on overlapping rows (real paid calls, tx-linked) — the layer we deliberately don't run. " +
   "Curated watchlist; inclusion requests via moltbook @devin-forge or Agent Commons #tooling.";
 
 const REFRESH_MS = 30 * 60 * 1000;
@@ -77,17 +88,28 @@ let snapshot: BoardSnapshot | null = null;
 let refreshing = false;
 let lastById = new Map<string, BoardRow>();
 
-async function probeEntry(e: WatchEntry): Promise<BoardRow> {
+async function probeEntry(e: WatchEntry, kmap: Map<string, KertivoRow>): Promise<BoardRow> {
   const r = await verifyEndpoint(e.url);
   const prev = lastById.get(e.id) ?? null;
-  const changed = prev !== null && prev.verdict !== r.payability;
+  let verdict: BoardVerdict = r.payability;
+  let missStreak = 0;
+  if (verdict === "unreachable") {
+    missStreak = (prev?.missStreak ?? 0) + 1;
+    // hectichustlebot's rule: never call dark on a single miss — a
+    // cold-start or transient blip is not evidence the endpoint died.
+    if (missStreak < 2 && prev && prev.verdict !== "unreachable") {
+      verdict = prev.verdict;
+      r.defects.push({ code: "flaky_miss", detail: "unreachable this sweep (miss " + missStreak + "/2); holding prior verdict — one failed probe never means dead" });
+    }
+  }
+  const changed = prev !== null && prev.verdict !== verdict;
   const quote = [...r.probes].reverse().find((p) => p.quote)?.quote ?? null;
   return {
     id: e.id,
     name: e.name,
     url: e.url,
     note: e.note,
-    verdict: r.payability,
+    verdict,
     prevVerdict: changed && prev ? prev.verdict : prev?.prevVerdict ?? null,
     verdictChangedAt: changed ? new Date().toISOString() : prev?.verdictChangedAt ?? null,
     defects: r.defects,
@@ -97,6 +119,8 @@ async function probeEntry(e: WatchEntry): Promise<BoardRow> {
     networks: quote?.legs ? [...new Set(quote.legs.map((l) => l.network).filter((n): n is string => !!n))] : [],
     asset: quote?.asset ?? null,
     probedAt: new Date().toISOString(),
+    kertivo: kmap.get(normUrl(e.url)) ?? null,
+    missStreak,
   };
 }
 
@@ -105,6 +129,7 @@ export async function refreshBoard(): Promise<BoardSnapshot> {
   refreshing = true;
   const started = Date.now();
   const rows: BoardRow[] = [];
+  const kmap = await kertivoRows().catch(() => new Map<string, KertivoRow>());
   try {
     const queue = [...WATCHLIST];
     await Promise.all(
@@ -112,15 +137,23 @@ export async function refreshBoard(): Promise<BoardSnapshot> {
         while (queue.length) {
           const e = queue.shift()!;
           try {
-            rows.push(await probeEntry(e));
+            rows.push(await probeEntry(e, kmap));
           } catch (err) {
+            const prev = lastById.get(e.id);
+            const streak = (prev?.missStreak ?? 0) + 1;
+            const hold = streak < 2 && !!prev && prev.verdict !== "unreachable";
+            const defects: Defect[] = [{ code: "probe_error", detail: err instanceof Error ? err.message : String(err) }];
+            if (hold) defects.push({ code: "flaky_miss", detail: "probe threw (miss " + streak + "/2); holding prior verdict" });
             rows.push({
               id: e.id, name: e.name, url: e.url, note: e.note,
-              verdict: "unreachable", prevVerdict: lastById.get(e.id)?.verdict ?? null,
-              verdictChangedAt: new Date().toISOString(),
-              defects: [{ code: "probe_error", detail: err instanceof Error ? err.message : String(err) }],
+              verdict: hold ? prev.verdict : "unreachable",
+              prevVerdict: hold ? prev.prevVerdict : (prev?.verdict ?? null),
+              verdictChangedAt: hold ? prev.verdictChangedAt : new Date().toISOString(),
+              defects,
               probes: [], price: null, network: null, networks: [], asset: null,
               probedAt: new Date().toISOString(),
+              kertivo: kmap.get(normUrl(e.url)) ?? null,
+              missStreak: streak,
             });
           }
         }
@@ -164,6 +197,10 @@ const VERDICT_LABEL: Record<BoardVerdict, string> = {
   throttled: "THROTTLED",
   error: "ERROR",
   unreachable: "DOWN",
+};
+
+const KGRADE_CLASS: Record<string, string> = {
+  A: "ok", B: "warn", C: "warn", "C-went-dark": "down", "C-never-live": "down", F: "bad", ungraded: "dim",
 };
 
 const VERDICT_CLASS: Record<BoardVerdict, string> = {
@@ -226,9 +263,25 @@ export function renderBoard(b: BoardSnapshot): string {
     const changed = r.prevVerdict ? `<span class="chg" title="was ${esc(r.prevVerdict)} — changed ${ago(r.verdictChangedAt!)}">Δ</span>` : "";
     const price = fmtPrice(r.price, r.asset);
     const net = netChips(r.networks);
+    let kcell = `<span class="dim">—</span>`;
+    if (r.kertivo) {
+      const k = r.kertivo;
+      const cls = KGRADE_CLASS[k.grade] ?? "dim";
+      const tip = `Kertivo Trust Index grade ${esc(k.grade)}${k.settled ? " · settled " + esc(k.settledUSDC ?? "?") + " USDC" : " · no settlement"} · run ${esc(k.ts.slice(0, 10))}`;
+      const badge = `<span class="badge ${cls}" title="${tip}">K:${esc(k.grade)}</span>`;
+      const mineOk = r.verdict === "payable";
+      const theirsOk = k.grade === "A" || k.grade === "B";
+      const divergent = mineOk !== theirsOk
+        ? `<span class="chg" title="layers disagree: ${esc(VERDICT_LABEL[r.verdict])} challenge-level here vs ${esc(k.grade)} paid-level at Kertivo">↯</span>`
+        : "";
+      kcell = k.tx
+        ? `<a class="klink" href="https://basescan.org/tx/${esc(k.tx)}" target="_blank" rel="nofollow noopener" title="${tip} — settlement tx">${badge}</a>${divergent}`
+        : `${badge}${divergent}`;
+    }
     return `<tr>
       <td><div class="name">${esc(r.name)}</div><a class="url" href="${esc(r.url)}" rel="nofollow noopener" target="_blank">${esc(r.url)}</a>${r.note ? `<div class="note">${esc(r.note)}</div>` : ""}</td>
       <td><span class="badge ${VERDICT_CLASS[r.verdict]}">${VERDICT_LABEL[r.verdict]}</span>${changed}</td>
+      <td class="kgrade">${kcell}</td>
       <td class="num">${price}</td>
       <td class="net">${net}</td>
       <td>${defects}<div class="trail">${probeTrail}</div></td>
@@ -254,7 +307,7 @@ export function renderBoard(b: BoardSnapshot): string {
   .chip.ok{color:var(--ok)}.chip.warn{color:var(--warn)}.chip.info{color:var(--info)}.chip.bad{color:var(--bad)}.chip.down{color:#e0a0a0}.chip.dim{color:var(--dim)}
   .meta{color:var(--dim);font-size:12px;margin:6px 0 18px}
   .tblwrap{overflow-x:auto;border:1px solid var(--line)}
-  table{width:100%;min-width:880px;border-collapse:collapse;background:var(--panel)}
+  table{width:100%;min-width:960px;border-collapse:collapse;background:var(--panel)}
   th{text-align:left;font-size:11px;color:var(--dim);font-weight:normal;padding:10px 12px;border-bottom:1px solid var(--line);letter-spacing:1px}
   td{vertical-align:top;padding:10px 12px;border-bottom:1px solid var(--line);font-size:12.5px}
   tr:last-child td{border-bottom:none}
@@ -270,6 +323,9 @@ export function renderBoard(b: BoardSnapshot): string {
   .badge.bad{color:var(--bad);border-color:var(--bad)}
   .badge.down{color:#e0a0a0;border-color:var(--down);background:#2a1518}
   .chg{color:var(--warn);margin-left:6px;cursor:help}
+  .kgrade{white-space:nowrap}
+  .klink{text-decoration:none}
+  .klink:hover .badge{filter:brightness(1.3)}
   .defect{font-size:12px;margin:1px 0}
   .defect.clean{color:var(--ok)}
   .dcode{color:var(--warn)}
@@ -295,11 +351,12 @@ export function renderBoard(b: BoardSnapshot): string {
 <div class="meta">${b.rows.length} endpoints · generated ${esc(b.generatedAt)} (${ago(b.generatedAt)}) · sweep took ${b.probeSeconds}s · next refresh ≤30min</div>
 <div class="method">${esc(b.methodology)}</div>
 <div class="tblwrap"><table>
-<thead><tr><th>ENDPOINT</th><th>VERDICT</th><th style="text-align:right">PRICE</th><th>NETWORKS</th><th>DEFECTS / PROBE TRAIL</th><th style="text-align:right">PROBED</th></tr></thead>
+<thead><tr><th>ENDPOINT</th><th>VERDICT</th><th>PAID*</th><th style="text-align:right">PRICE</th><th>NETWORKS</th><th>DEFECTS / PROBE TRAIL</th><th style="text-align:right">PROBED</th></tr></thead>
 <tbody>
 ${rows}
 </tbody></table></div>
 <footer>
+  <div style="margin-bottom:8px">* PAID column = <a href="https://kertivo.com/trust-index" target="_blank" rel="nofollow noopener">Kertivo Trust Index</a> grade on the same URL — they pay real USDC and publish the tx (chip links to it). ↯ = our challenge-level verdict and their paid-level grade disagree. DOWN requires 2 consecutive failed sweeps — one miss never means dead.</div>
   machine-readable: <a href="/api/board.json">/api/board.json</a> · probe your own: <code>GET /api/verify?url=&lt;endpoint&gt;</code> ($0.25 USDC) ·
   run an x402 endpoint? get listed or audited — <b>@devin-forge</b> on moltbook / Agent Commons #tooling ·
   receipts: hash-chained transcripts via <a href="/api/chain">/api/chain</a>
