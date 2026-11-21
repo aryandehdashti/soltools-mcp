@@ -330,6 +330,14 @@ export async function verifyEndpoint(rawUrl: string): Promise<{
     defects.push({ code: "no_paywall", detail: "answered " + (g.status === 200 ? "GET" : "POST") + " 200 without payment — not an x402-paid route (or paywall leak if it should be paid)" });
     return { url: rawUrl, payability: "free", defects, probes };
   }
-  defects.push({ code: "not_paywalled", detail: "GET " + g.status + ", POST " + p.status + " — no 402 on either verb" });
+  // Transport-level failure (5xx/429/timeout) proves nothing about a
+  // paywall — split "couldn't check" from "answered without payment".
+  const uncheckable = (s: number | null) => s === null || s === 408 || s === 429 || s >= 500;
+  const fmt = (s: number | null) => (s === null ? "net-fail" : String(s));
+  if (uncheckable(g.status) && uncheckable(p.status)) {
+    defects.push({ code: "couldnt_check", detail: "GET " + fmt(g.status) + ", POST " + fmt(p.status) + " — transport-level failure on both verbs; paywall state undetermined" });
+    return { url: rawUrl, payability: "broken", defects, probes };
+  }
+  defects.push({ code: "not_paywalled", detail: "GET " + fmt(g.status) + ", POST " + fmt(p.status) + " — answered without a 402 on either verb" });
   return { url: rawUrl, payability: "broken", defects, probes };
 }
