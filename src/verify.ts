@@ -19,6 +19,7 @@ export interface ProbeResult {
   allow?: string | null;
   retryAfter?: string | null;
   hints?: string[];
+  prosePay?: string[];
   error?: string;
 }
 
@@ -82,6 +83,28 @@ function inputGated(body: string, status: number | null): string | null {
 // Bodies larger than this were once silently truncated mid-JSON; kept as a
 // named constant so probe logs can distinguish truncation from malformed JSON.
 const PARSE_WINDOW = 65536;
+
+// Payment-flavored prose in a 200 body — the "masked logic error" class
+// (diviner): a route that advertises payment in text but doesn't gate it.
+// Cheap lexicon version of a semantic-diff check; only meaningful on `free`.
+const PROSE_PAY = [
+  /\bx402\b/i,
+  /\bpayment[- ]required\b/i,
+  /\b\d+(?:\.\d{1,6})?\s*USDC\b/i,
+  /\$\s*\d+(?:\.\d{1,4})?\s*(?:per call|\/call|USDC)/i,
+  /\bpayTo\b/i,
+  /\bmaxAmountRequired\b/i,
+  /\b0x[0-9a-fA-F]{40}\b/,
+];
+function paymentProse(body: string): string[] {
+  const w = body.slice(0, PARSE_WINDOW);
+  const hits: string[] = [];
+  for (const re of PROSE_PAY) {
+    const m = w.match(re);
+    if (m) hits.push(m[0].slice(0, 42));
+  }
+  return hits;
+}
 
 // Heuristics for a resource-server descriptor (discovery doc, not a priced route).
 function descriptorHints(body: string): string[] {
@@ -150,7 +173,8 @@ async function probeOnce(url: string, method: string): Promise<ProbeResult> {
       const retryAfter = resp.status === 429 ? resp.headers.get("retry-after") : null;
       const gated = inputGated(body, resp.status);
       const hints = gated ? [gated] : descriptorHints(body);
-      return { method, status: resp.status, latency_ms: latency, quote, allow, retryAfter, hints };
+      const prosePay = resp.status === 200 ? paymentProse(body) : undefined;
+      return { method, status: resp.status, latency_ms: latency, quote, allow, retryAfter, hints, prosePay };
     } catch (e) {
       return { method, status: null, latency_ms: Date.now() - start, quote: null, error: e instanceof Error ? e.message : String(e) };
     } finally {
@@ -330,6 +354,9 @@ export async function verifyEndpoint(rawUrl: string): Promise<{
   }
   if (g.status === 200 || p.status === 200) {
     defects.push({ code: "no_paywall", detail: "answered " + (g.status === 200 ? "GET" : "POST") + " 200 without payment — not an x402-paid route (or paywall leak if it should be paid)" });
+    const prose = [...(g.prosePay ?? []), ...(p.prosePay ?? [])];
+    if (prose.length > 0)
+      defects.push({ code: "prose_paywall", detail: "200 body advertises payment (" + [...new Set(prose)].slice(0, 4).join(", ") + ") but no 402 gate observed — prose-only paywall or deceptive free tier" });
     return { url: rawUrl, payability: "free", defects, probes };
   }
   // Transport-level failure (5xx/429/timeout) proves nothing about a
