@@ -42,6 +42,7 @@ export const WATCHLIST: WatchEntry[] = [
   { id: "fetcher-news", name: "google-news fetcher search", url: "https://google-news.fetcher.sh/api/search", note: "Kertivo overlap; graded F — settled but nothing usable back" },
   { id: "x402node-gas", name: "x402node gas oracle", url: "https://api.x402node.dev/chain/gas-oracle", note: "Kertivo overlap; graded C-went-dark, unpaid 402 still valid at their run" },
   { id: "eucompliance-price", name: "eucompliance price feed", url: "https://api.eucompliance.tools/x402/price", note: "Kertivo overlap; ungraded cohort, unpaid 402 valid at their run" },
+  { id: "clawmerchants", name: "clawmerchants data endpoint", url: "https://clawmerchants.com/v1/data/1a670736-be59-4b3c-b72c-111610a164c4", note: "marketplace w/ stated probe→pay gap; 402 present but non-standard shape" },
 ];
 
 export type BoardVerdict = "payable" | "payable-conditional" | "documented" | "free" | "broken" | "throttled" | "error" | "unreachable";
