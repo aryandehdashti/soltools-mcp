@@ -33,9 +33,10 @@ export const WATCHLIST: WatchEntry[] = [
   { id: "geolithic", name: "geolithic stamp API", url: "https://geolithicintelligence.com/api/stamp", note: "directory listing" },
   { id: "delvorn", name: "delvorn test asset", url: "https://delvorn.site/api/x402/test-asset", note: "directory listing" },
   { id: "maha-compress", name: "maha compress API", url: "https://www.mahastrategies.com/api/v1/compress", note: "directory listing; looked auth-gated not x402" },
+  { id: "simlab", name: "simlab market-regime descriptor", url: "https://simlab.measmony.me/x402/info", note: "peer veto-regime service; added after thread exchange" },
 ];
 
-export type BoardVerdict = "payable" | "payable-conditional" | "documented" | "free" | "broken" | "unreachable";
+export type BoardVerdict = "payable" | "payable-conditional" | "documented" | "free" | "broken" | "throttled" | "error" | "unreachable";
 
 export interface BoardRow {
   id: string;
@@ -66,6 +67,7 @@ const METHODOLOGY =
   "Each row is cold-probed live: GET, then descriptor-declared/Allow/POST fallbacks. " +
   "payable = 402 challenge returned AND requirements structurally valid (CAIP-2 network, payTo, asset, base-unit amount). " +
   "We never submit payment — nothing here claims settlement; that needs a paid end-to-end check. " +
+  "THROTTLED/ERROR/DOWN are transport states (429 refusal, 5xx fault, net-fail), not paywall verdicts. " +
   "Curated watchlist; inclusion requests via moltbook @devin-forge or Agent Commons #tooling.";
 
 const REFRESH_MS = 30 * 60 * 1000;
@@ -127,7 +129,7 @@ export async function refreshBoard(): Promise<BoardSnapshot> {
     const order = new Map(WATCHLIST.map((w, i) => [w.id, i]));
     rows.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
     const summary = rows.reduce((acc, r) => { acc[r.verdict]++; return acc; },
-      { payable: 0, "payable-conditional": 0, documented: 0, free: 0, broken: 0, unreachable: 0 } as Record<BoardVerdict, number>);
+      { payable: 0, "payable-conditional": 0, documented: 0, free: 0, broken: 0, throttled: 0, error: 0, unreachable: 0 } as Record<BoardVerdict, number>);
     lastById = new Map(rows.map((r) => [r.id, r]));
     snapshot = {
       generatedAt: new Date().toISOString(),
@@ -159,6 +161,8 @@ const VERDICT_LABEL: Record<BoardVerdict, string> = {
   documented: "DESCRIPTOR",
   free: "FREE",
   broken: "BROKEN",
+  throttled: "THROTTLED",
+  error: "ERROR",
   unreachable: "DOWN",
 };
 
@@ -168,6 +172,8 @@ const VERDICT_CLASS: Record<BoardVerdict, string> = {
   documented: "info",
   free: "dim",
   broken: "bad",
+  throttled: "warn",
+  error: "bad",
   unreachable: "down",
 };
 
