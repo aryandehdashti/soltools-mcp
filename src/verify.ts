@@ -17,6 +17,7 @@ export interface ProbeResult {
   latency_ms: number;
   quote: QuoteInfo | null;
   allow?: string | null;
+  retryAfter?: string | null;
   hints?: string[];
   error?: string;
 }
@@ -146,9 +147,10 @@ async function probeOnce(url: string, method: string): Promise<ProbeResult> {
       const latency = Date.now() - start;
       const quote = resp.status === 402 ? parseQuote(resp, body.slice(0, 8192)) : null;
       const allow = resp.status === 405 ? resp.headers.get("allow") : null;
+      const retryAfter = resp.status === 429 ? resp.headers.get("retry-after") : null;
       const gated = inputGated(body, resp.status);
       const hints = gated ? [gated] : descriptorHints(body);
-      return { method, status: resp.status, latency_ms: latency, quote, allow, hints };
+      return { method, status: resp.status, latency_ms: latency, quote, allow, retryAfter, hints };
     } catch (e) {
       return { method, status: null, latency_ms: Date.now() - start, quote: null, error: e instanceof Error ? e.message : String(e) };
     } finally {
@@ -178,7 +180,7 @@ function allowMethod(allow: string | null | undefined, tried: Set<string>): stri
 
 export async function verifyEndpoint(rawUrl: string): Promise<{
   url: string;
-  payability: "payable" | "payable-conditional" | "documented" | "free" | "broken" | "unreachable";
+  payability: "payable" | "payable-conditional" | "documented" | "free" | "broken" | "throttled" | "error" | "unreachable";
   defects: Defect[];
   probes: ProbeResult[];
 }> {
@@ -331,12 +333,25 @@ export async function verifyEndpoint(rawUrl: string): Promise<{
     return { url: rawUrl, payability: "free", defects, probes };
   }
   // Transport-level failure (5xx/429/timeout) proves nothing about a
-  // paywall — split "couldn't check" from "answered without payment".
+  // paywall — split "couldn't check" from "answered without payment",
+  // and split refusals (429) and server faults (5xx) from each other:
+  // they are endpoint states, not paywall verdicts.
   const uncheckable = (s: number | null) => s === null || s === 408 || s === 429 || s >= 500;
+  const serverErr = (s: number | null) => s !== null && s >= 500;
   const fmt = (s: number | null) => (s === null ? "net-fail" : String(s));
   if (uncheckable(g.status) && uncheckable(p.status)) {
+    const ra = g.retryAfter ?? p.retryAfter;
+    const raNote = ra ? " (Retry-After: " + ra + ")" : " (no Retry-After header)";
+    if ((g.status === 429 || p.status === 429) && !serverErr(g.status) && !serverErr(p.status)) {
+      defects.push({ code: "rate_limited", detail: "GET " + fmt(g.status) + ", POST " + fmt(p.status) + raNote + " — endpoint refused the probe; paywall state undetermined" });
+      return { url: rawUrl, payability: "throttled", defects, probes };
+    }
+    if (serverErr(g.status) || serverErr(p.status)) {
+      defects.push({ code: "couldnt_check", detail: "GET " + fmt(g.status) + ", POST " + fmt(p.status) + " — server error on both verbs; paywall state undetermined" });
+      return { url: rawUrl, payability: "error", defects, probes };
+    }
     defects.push({ code: "couldnt_check", detail: "GET " + fmt(g.status) + ", POST " + fmt(p.status) + " — transport-level failure on both verbs; paywall state undetermined" });
-    return { url: rawUrl, payability: "broken", defects, probes };
+    return { url: rawUrl, payability: "unreachable", defects, probes };
   }
   defects.push({ code: "not_paywalled", detail: "GET " + fmt(g.status) + ", POST " + fmt(p.status) + " — answered without a 402 on either verb" });
   return { url: rawUrl, payability: "broken", defects, probes };
