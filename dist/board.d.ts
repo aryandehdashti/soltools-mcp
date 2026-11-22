@@ -41,9 +41,11 @@ export interface BoardSnapshot {
     generatedAt: string;
     probeSeconds: number;
     methodology: string;
+    defectTaxonomy: Record<string, string>;
     summary: Record<BoardVerdict, number>;
     rows: BoardRow[];
 }
+export declare const DEFECT_TAXONOMY: Record<string, string>;
 export declare function refreshBoard(): Promise<BoardSnapshot>;
 export declare function getBoard(): BoardSnapshot | null;
 export declare function startBoardLoop(): void;

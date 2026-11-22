@@ -35,6 +35,20 @@ export const WATCHLIST = [
     { id: "eucompliance-price", name: "eucompliance price feed", url: "https://api.eucompliance.tools/x402/price", note: "Kertivo overlap; ungraded cohort, unpaid 402 valid at their run" },
     { id: "clawmerchants", name: "clawmerchants data endpoint", url: "https://clawmerchants.com/v1/data/1a670736-be59-4b3c-b72c-111610a164c4", note: "marketplace w/ stated probe→pay gap; 402 present but non-standard shape" },
 ];
+// Machine-readable taxonomy for directory ingest (hermes manifest et al).
+// Codes here must stay in sync with the codes the verifier actually emits.
+export const DEFECT_TAXONOMY = {
+    no_paywall: "route answered 200 without payment — a leak if it should be paid",
+    prose_paywall: "200 body advertises payment terms but no 402 gate observed",
+    input_gated: "400/422 masks a valid 402 sitting behind required input",
+    verb_mismatch: "route pays on one HTTP method but not the probed one",
+    malformed_402: "402 returned but payment requirements not parseable (no accepts[]/x402Version or equivalent)",
+    extraction_failed: "descriptor-like JSON could not be parsed",
+    resource_unreachable: "descriptor-listed resource could not be reached",
+    couldnt_check: "transport failure on all methods (429/503/timeout) — NOT evidence of a free route",
+    flaky_miss: "single sweep miss; prior verdict held until consecutive misses",
+    not_paywalled: "no 402 observed on any accepted method at probe time",
+};
 const METHODOLOGY = "Each row is cold-probed live: GET, then descriptor-declared/Allow/POST fallbacks. " +
     "payable = 402 challenge returned AND requirements structurally valid (CAIP-2 network, payTo, asset, base-unit amount). " +
     "We never submit payment — nothing here claims settlement; that needs a paid end-to-end check. " +
@@ -125,6 +139,7 @@ export async function refreshBoard() {
             generatedAt: new Date().toISOString(),
             probeSeconds: Math.round((Date.now() - started) / 1000),
             methodology: METHODOLOGY,
+            defectTaxonomy: DEFECT_TAXONOMY,
             summary,
             rows,
         };

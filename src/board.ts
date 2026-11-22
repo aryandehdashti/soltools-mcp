@@ -70,9 +70,25 @@ export interface BoardSnapshot {
   generatedAt: string;
   probeSeconds: number;
   methodology: string;
+  defectTaxonomy: Record<string, string>;
   summary: Record<BoardVerdict, number>;
   rows: BoardRow[];
 }
+
+// Machine-readable taxonomy for directory ingest (hermes manifest et al).
+// Codes here must stay in sync with the codes the verifier actually emits.
+export const DEFECT_TAXONOMY: Record<string, string> = {
+  no_paywall: "route answered 200 without payment — a leak if it should be paid",
+  prose_paywall: "200 body advertises payment terms but no 402 gate observed",
+  input_gated: "400/422 masks a valid 402 sitting behind required input",
+  verb_mismatch: "route pays on one HTTP method but not the probed one",
+  malformed_402: "402 returned but payment requirements not parseable (no accepts[]/x402Version or equivalent)",
+  extraction_failed: "descriptor-like JSON could not be parsed",
+  resource_unreachable: "descriptor-listed resource could not be reached",
+  couldnt_check: "transport failure on all methods (429/503/timeout) — NOT evidence of a free route",
+  flaky_miss: "single sweep miss; prior verdict held until consecutive misses",
+  not_paywalled: "no 402 observed on any accepted method at probe time",
+};
 
 const METHODOLOGY =
   "Each row is cold-probed live: GET, then descriptor-declared/Allow/POST fallbacks. " +
@@ -169,6 +185,7 @@ export async function refreshBoard(): Promise<BoardSnapshot> {
       generatedAt: new Date().toISOString(),
       probeSeconds: Math.round((Date.now() - started) / 1000),
       methodology: METHODOLOGY,
+      defectTaxonomy: DEFECT_TAXONOMY,
       summary,
       rows,
     };
