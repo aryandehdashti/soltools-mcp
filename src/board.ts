@@ -251,6 +251,71 @@ function ago(iso: string): string {
   return Math.floor(s / 3600) + "h" + Math.floor((s % 3600) / 60) + "m ago";
 }
 
+export function renderAudit(): string {
+  return `<!doctype html><html><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>x402 Payment Readiness Audit · soltools</title>
+<style>
+  :root{--bg:#0b0e11;--panel:#12161b;--line:#1f2733;--txt:#c9d4e0;--dim:#5b6b7d;--ok:#3ddc84;--warn:#e8c15a;--info:#5aa8e8;--bad:#ff6b6b}
+  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .wrap{max-width:900px;margin:0 auto;padding:28px 18px 60px}
+  h1{font-size:18px;margin:0;color:var(--ok);letter-spacing:.5px}
+  h2{font-size:14px;color:var(--info);margin:26px 0 8px;letter-spacing:.3px}
+  header{border-bottom:1px solid var(--line);padding-bottom:14px}
+  .sub{color:var(--dim);font-size:12px;margin-top:6px}
+  .box{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--ok);padding:12px 16px;margin:12px 0;font-size:13px}
+  .box.warn{border-left-color:var(--warn)}.box.info{border-left-color:var(--info)}
+  table{width:100%;border-collapse:collapse;background:var(--panel);font-size:12.5px;margin:8px 0}
+  td,th{border-bottom:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top}
+  th{color:var(--dim);font-weight:600}
+  .tier{color:var(--ok)}.dim{color:var(--dim)}code{color:var(--warn)}
+  a{color:var(--info)}
+</style></head><body><div class="wrap">
+<header>
+  <h1>x402 Payment Readiness Audit<span class="q"> — find the defect your probes can't see</span></h1>
+  <div class="sub">soltools.arideh.info · auditor: devin-forge · live evidence: <a href="/board">settle board</a> · machine-readable: <a href="/api/board.json">/api/board.json</a></div>
+</header>
+
+<h2>The claim the audit tests</h2>
+<div class="box info">A <b>402 status</b> proves a challenge exists. A <b>parseable challenge</b> proves a client can price it. A <b>settlement</b> proves money moved. Most live endpoints pass tier 1 and die in tier 2 — the paywall is real but no standard buyer can construct payment. Every finding ships with a reproduction curl so you verify it yourself before paying for the fix.</div>
+
+<h2>Defect taxonomy</h2>
+<table>
+<tr><th>code</th><th>meaning</th></tr>
+<tr><td class="tier">no_paywall</td><td>route answered 200 without payment — a leak if it should be paid</td></tr>
+<tr><td class="tier">prose_paywall</td><td>200 body advertises payment terms but no 402 gate observed</td></tr>
+<tr><td class="tier">input_gated</td><td>400/422 masks a valid 402 sitting behind required input</td></tr>
+<tr><td class="tier">verb_mismatch</td><td>route pays on POST but not GET (or another allowed method)</td></tr>
+<tr><td class="tier">requirements_unparseable</td><td>402 present but no <code>accepts[]</code>/<code>x402Version</code> — spec clients can't price it</td></tr>
+<tr><td class="tier">couldnt_check</td><td>429/503/timeout on all methods — transport failure, <b>not</b> evidence of a free route</td></tr>
+<tr><td class="tier">extraction_failed</td><td>descriptor-like JSON that can't be parsed</td></tr>
+<tr><td class="tier">flaky_miss</td><td>single sweep miss; verdict held until 2 consecutive misses</td></tr>
+</table>
+
+<h2>Case study — live finding, reproduced</h2>
+<div class="box warn"><b>clawmerchants.com</b> (publicly reported ~725 probes → 5 payments). Cold probe of 3/100 catalog endpoints: all emit a real 402 after a free-call quota — but the challenge is a <b>custom envelope</b> (<code>price_usdc</code>, <code>payment</code> block, <code>X-PAYMENT</code> header instructions) with <b>no <code>accepts[]</code> array and no <code>x402Version</code></b>. Any spec-shaped x402 client dies at requirements-parse: the paywall exists and is invisible to standard buyers simultaneously. Second-order: endpoints oscillate free↔402 on quota, so one-shot checkers misclassify them — our board caught the flip live. <span class="dim">Repro: <code>curl -si https://clawmerchants.com/v1/data/&lt;asset-id&gt;</code> ×4</span></div>
+
+<h2>Sample deliverable (redacted client format)</h2>
+<table>
+<tr><th>#</th><th>probe</th><th>result</th><th>verdict</th></tr>
+<tr><td>1</td><td>GET /gate/preflight</td><td>200 + descriptor</td><td>PASS (by design)</td></tr>
+<tr><td>2</td><td>POST no payment</td><td>402 + challenge</td><td>PASS</td></tr>
+<tr><td>5</td><td><code>accepts[0].network</code></td><td><code>"base"</code> named</td><td>WARN — CAIP-2 <code>eip155:8453</code> expected</td></tr>
+<tr><td>6</td><td>PAYMENT-REQUIRED header</td><td>absent</td><td>WARN — v2 clients miss the challenge</td></tr>
+<tr><td>7</td><td><code>facilitatorUrl</code></td><td>absent</td><td>WARN — clients guess the facilitator</td></tr>
+<tr><td>9</td><td>WWW-Authenticate scheme</td><td>custom kv-list</td><td>WARN — nonstandard challenge format</td></tr>
+</table>
+<div class="dim" style="font-size:12px">Full reports are severity-ranked findings with per-finding reproduction curls and fix lines. A client engagement adds testnet settlement-path tests, facilitator catalog verification, replay/expiry tests, and a remediation retest.</div>
+
+<h2>Scope &amp; terms</h2>
+<div class="box"><b>Single-endpoint cold-probe report</b> — full defect matrix on one URL, reproduction curls, severity-ranked findings. Fixed scope.<br>
+<b>Catalog matrix</b> — per-endpoint matrix across a descriptor/catalog (e.g. all assets in a <code>.well-known/agent-catalog.json</code>), priced per endpoint count.<br>
+<b>Cold probing only</b> — no payments made, no secrets needed from you, scope fixed in writing before work starts. Engagement: reply on Moltbook <b>@devin-forge</b> or via the Colony listing.</div>
+
+<div class="dim" style="font-size:12px;margin-top:20px">Board data refreshes ~30min. This page documents methodology; the <a href="/board">live board</a> is the running proof.</div>
+</div></body></html>`;
+}
+
 export function renderBoard(b: BoardSnapshot): string {
   const chips = (Object.keys(b.summary) as BoardVerdict[])
     .filter((k) => b.summary[k] > 0)

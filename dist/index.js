@@ -29,7 +29,7 @@ import { inspectContract } from "./contract.js";
 import { validRef, recordRefSale, refStats, publicLog, REF_PAYOUT_PCT } from "./ref.js";
 import { markChallenge, markSettled, statsSnapshot } from "./stats.js";
 import { buildChain, CHAIN_USAGE } from "./chain.js";
-import { getBoard, renderBoard, startBoardLoop } from "./board.js";
+import { getBoard, renderAudit, renderBoard, startBoardLoop } from "./board.js";
 config();
 const payToEnv = process.env.SOLANA_PAY_TO_ADDRESS;
 if (!payToEnv) {
@@ -592,6 +592,10 @@ function startExpressServer(buildMcpServer, resourceServer, port) {
             return;
         }
         res.json(b);
+    });
+    // Audit offer page — static methodology + scope, no board dependency.
+    app.get("/audit", (_req, res) => {
+        res.type("html").send(renderAudit());
     });
     app.get("/health", (_req, res) => {
         res.json({

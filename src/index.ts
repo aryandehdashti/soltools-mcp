@@ -30,7 +30,7 @@ import { inspectContract } from "./contract.js";
 import { validRef, recordRefSale, refStats, publicLog, REF_PAYOUT_PCT } from "./ref.js";
 import { markChallenge, markSettled, statsSnapshot } from "./stats.js";
 import { buildChain, CHAIN_USAGE } from "./chain.js";
-import { getBoard, refreshBoard, renderBoard, startBoardLoop } from "./board.js";
+import { getBoard, refreshBoard, renderAudit, renderBoard, startBoardLoop } from "./board.js";
 
 config();
 
@@ -637,6 +637,11 @@ function startExpressServer(buildMcpServer: () => Promise<McpServer>, resourceSe
     const b = getBoard();
     if (!b) { res.status(503).json({ error: "board warming up — first sweep in progress" }); return; }
     res.json(b);
+  });
+
+  // Audit offer page — static methodology + scope, no board dependency.
+  app.get("/audit", (_req: express.Request, res: express.Response) => {
+    res.type("html").send(renderAudit());
   });
 
   app.get("/health", (_req: express.Request, res: express.Response) => {

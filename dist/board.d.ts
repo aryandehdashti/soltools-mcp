@@ -47,4 +47,5 @@ export interface BoardSnapshot {
 export declare function refreshBoard(): Promise<BoardSnapshot>;
 export declare function getBoard(): BoardSnapshot | null;
 export declare function startBoardLoop(): void;
+export declare function renderAudit(): string;
 export declare function renderBoard(b: BoardSnapshot): string;
